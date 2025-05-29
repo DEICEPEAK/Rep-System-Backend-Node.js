@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB:     ${DB_NAME}
+      POSTGRES_USER:   ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: always
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    # mount your entire project root into /usr/src/app
+    volumes:
+      - .:/usr/src/app
+    working_dir: /usr/src/app
+    # this will invoke `npm start` as defined in your package.json
+    command: ["npm", "start"]
+    ports:
+      - "${PORT}:${PORT}"
+    depends_on:
+      - db
+    restart: on-failure
+
+volumes:
+  db_data:
