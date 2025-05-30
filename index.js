@@ -10,8 +10,13 @@ const authRoute    = require('./routes/authRoutes');
 const app = express();
 
 // 1) CORS _before_ everything else
+const allowedOrigins = [
+  'https://velvety-sunshine-d944db.netlify.app',
+  'http://localhost:5173'         // <-- add your dev origin here
+];
+
 app.use(cors({
-  origin: ['https://velvety-sunshine-d944db.netlify.app'], 
+  origin: allowedOrigins,
   methods: ['GET','POST','PUT','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization'],
   credentials: true
