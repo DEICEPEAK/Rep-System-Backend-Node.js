@@ -10,8 +10,9 @@ const authRoute    = require('./routes/authRoutes');
 const app = express();
 
 // 1) Enable CORS _before_ your routes
+const allowedOrigins = ['https://velvety-sunshine-d944db.netlify.app'];
 app.use(cors({
-  origin: ['https://your-frontend.vercel.app'],  // or '*' while in dev
+  origin: allowedOrigins,
   methods: ['GET','POST','PUT','DELETE','OPTIONS'],
   credentials: true
 }));
