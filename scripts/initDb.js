@@ -1,4 +1,4 @@
-// scripts/initDb.js
+// scripts/initDb.js -- newly updated for users, password_resets, twitter_mentions, instagram_mentions
 
 const pool = require('../db/pool');
 
