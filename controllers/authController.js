@@ -15,11 +15,12 @@ function validatePassword(password) {
 }
 
 // Register a new user
+// Register a new user
 exports.registerUser = async (req, res, next) => {
   try {
-    const { first_name, last_name, password, confirm_password, company_name, email, country, telephone } = req.body;
+    const { first_name, last_name, password, confirm_password, company_name, email, country, telephone, company_web_address } = req.body;
 
-    // 1. All fields required
+    // 1. All fields required (except company_web_address)
     if (!first_name || !last_name || !password || !confirm_password || !company_name || !email || !country || !telephone) {
       return res.status(400).json({ error: 'All fields are required.' });
     }
@@ -48,9 +49,9 @@ exports.registerUser = async (req, res, next) => {
 
     // 5. Insert user
     await pool.query(
-      `INSERT INTO users (first_name, last_name, password, company_name, email, country, telephone)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [ first_name, last_name, hashed, company_name, email, country, telephone ]
+      `INSERT INTO users (first_name, last_name, password, company_name, email, country, telephone, company_web_address)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [ first_name, last_name, hashed, company_name, email, country, telephone, company_web_address || null ]
     );
 
     res.status(201).json({ message: 'User registered successfully.' });

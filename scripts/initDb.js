@@ -15,6 +15,7 @@ const pool = require('../db/pool');
         last_name       TEXT      NOT NULL,
         password        TEXT      NOT NULL,
         company_name    TEXT      NOT NULL,
+        company_web_address   TEXT,
         email           TEXT      NOT NULL,
         country         TEXT      NOT NULL,
         telephone       TEXT      NOT NULL,
@@ -75,6 +76,27 @@ const pool = require('../db/pool');
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_insta_company_date
       ON instagram_mentions(company_name, created_at);
+    `);
+
+
+    // 7. Create trustpilot_reviews table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS trustpilot_reviews (
+        id                  SERIAL         PRIMARY KEY,
+        company_name        TEXT           NOT NULL,      -- for easy filtering
+        company_web_address TEXT           NOT NULL,
+        author_name         TEXT           NULL,
+        rating              INTEGER        NULL,
+        review_title        TEXT           NULL,
+        review_body         TEXT           NULL,
+        review_date         DATE           NULL,
+        created_at       TIMESTAMPTZ     NOT NULL,          -- parsed date
+        fetched_at          TIMESTAMPTZ    NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_tp_company_date
+      ON trustpilot_reviews(company_name, review_date);
     `);
 
     console.log('✓ Database schema is ready for ETL');
