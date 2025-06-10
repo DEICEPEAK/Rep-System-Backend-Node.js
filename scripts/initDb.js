@@ -1,4 +1,4 @@
-// scripts/initDb.js -- newly updated for users, password_resets, twitter_mentions, instagram_mentions
+// scripts/initDb.js
 
 const pool = require('../db/pool');
 
@@ -9,18 +9,15 @@ const pool = require('../db/pool');
 
     // 2. Create users table (if not exists) AND add created_at + last_fetched_at
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id              UUID      PRIMARY KEY DEFAULT uuid_generate_v4(),
-        first_name      TEXT      NOT NULL,
-        last_name       TEXT      NOT NULL,
-        password        TEXT      NOT NULL,
-        company_name    TEXT      NOT NULL,
-        company_web_address   TEXT,
-        email           TEXT      NOT NULL,
-        country         TEXT      NOT NULL,
-        telephone       TEXT      NOT NULL,
-        created_at      TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-        last_fetched_at TIMESTAMPTZ NULL
+      id                  SERIAL PRIMARY KEY,
+      company_name        TEXT NOT NULL,
+      company_web_address TEXT NOT NULL,
+      author_name         TEXT,
+      rating              INTEGER,
+      review_title        TEXT,
+      review_body         TEXT,
+      review_date         DATE,
+      fetched_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
 
@@ -79,6 +76,7 @@ const pool = require('../db/pool');
     `);
 
 
+
     // 7. Create trustpilot_reviews table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS trustpilot_reviews (
@@ -90,14 +88,16 @@ const pool = require('../db/pool');
         review_title        TEXT           NULL,
         review_body         TEXT           NULL,
         review_date         DATE           NULL,
-        created_at       TIMESTAMPTZ     NOT NULL,          -- parsed date
+        created_at       TIMESTAMPTZ  DEFAULT NOW()   NOT NULL,  
         fetched_at          TIMESTAMPTZ    NOT NULL DEFAULT NOW()
       );
     `);
     await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_tp_company_date
-      ON trustpilot_reviews(company_name, review_date);
+      CONSTRAINT uq_tp_reviews UNIQUE (company_name, author_name, review_title, review_date)
     `);
+
+
+
 
     console.log('✓ Database schema is ready for ETL');
   } catch (err) {
