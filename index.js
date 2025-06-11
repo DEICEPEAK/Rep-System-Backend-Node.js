@@ -6,13 +6,14 @@ require('dotenv').config();
 
 const metricsRoute = require('./routes/metricsRoutes');
 const authRoute    = require('./routes/authRoutes');
+const analyticsRoute = require('./routes/analyticsRoutes'); 
 
 const app = express();
 
 // 1) CORS _before_ everything else
 const allowedOrigins = [
   'https://velvety-sunshine-d944db.netlify.app',
-  'http://localhost:5173'         // <-- add your dev origin here
+  'http://localhost:5173'        
 ];
 
 app.use(cors({
@@ -29,6 +30,7 @@ app.use(express.urlencoded({ extended: true }));
 // 3) Your routes
 app.use('/api/auth',   authRoute);
 app.use('/api/metrics', metricsRoute);
+app.use('/api/analytics', analyticsRoute);
 
 // 4) Health check
 app.get('/health', (_, res) => 
