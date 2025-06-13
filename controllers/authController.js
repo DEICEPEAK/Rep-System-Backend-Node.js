@@ -14,7 +14,7 @@ function validatePassword(password) {
   return re.test(password);
 }
 
-// Register a new user
+
 // Register a new user
 exports.registerUser = async (req, res, next) => {
   try {
