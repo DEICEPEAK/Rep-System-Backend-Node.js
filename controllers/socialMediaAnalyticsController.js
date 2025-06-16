@@ -37,6 +37,7 @@ async function fetchCompanyName(email) {
   return rows[0].company_name;
 }
 
+
 /**
  * Combined “metrics” endpoint covering:
  *  - total mentions (current period)
@@ -51,87 +52,100 @@ exports.mentionMetrics = async (req, res, next) => {
     const { email } = req.query;
     if (!email) return res.status(400).json({ error: 'Email is required.' });
 
-    const company = await fetchCompanyName(email);
+    const company   = await fetchCompanyName(email);
     const { start, end, _startDate, _endDate } = getDateRange(req.query);
 
     // compute previous period of same length
-    const msPerDay = 24 * 60 * 60 * 1000;
-    let periodMs = _endDate.getTime() - _startDate.getTime();
+    const msPerDay  = 24 * 60 * 60 * 1000;
+    let periodMs    = _endDate.getTime() - _startDate.getTime();
     if (periodMs < msPerDay) periodMs = msPerDay;
 
-    const prevEnd   = new Date(_startDate.getTime() - msPerDay);
-    const prevStart = new Date(prevEnd.getTime() - periodMs);
-    const fmt       = d => d.toISOString().slice(0, 10);
+    const prevEnd     = new Date(_startDate.getTime() - msPerDay);
+    const prevStart   = new Date(prevEnd.getTime() - periodMs);
+    const fmt         = d => d.toISOString().slice(0, 10);
     const prevStartStr = fmt(prevStart);
     const prevEndStr   = fmt(prevEnd);
 
-    // 1) total counts for current & previous periods
-    const totalSql = `
+    // single SQL to union both tables for current & previous, then aggregate
+    const metricsSql = `
+      WITH current_period AS (
+        SELECT sentiment
+          FROM twitter_mentions
+         WHERE company_name = $1
+           AND created_at::date BETWEEN $2 AND $3
+        UNION ALL
+        SELECT sentiment
+          FROM instagram_mentions
+         WHERE company_name = $1
+           AND created_at::date BETWEEN $2 AND $3
+      ),
+      previous_period AS (
+        SELECT sentiment
+          FROM twitter_mentions
+         WHERE company_name = $1
+           AND created_at::date BETWEEN $4 AND $5
+        UNION ALL
+        SELECT sentiment
+          FROM instagram_mentions
+         WHERE company_name = $1
+           AND created_at::date BETWEEN $4 AND $5
+      )
       SELECT
-        COUNT(*) FILTER (WHERE created_at::date BETWEEN $2 AND $3)::int  AS current_total,
-        COUNT(*) FILTER (WHERE created_at::date BETWEEN $4 AND $5)::int  AS previous_total
-      FROM twitter_mentions
-     WHERE company_name = $1
+        (SELECT COUNT(*) FROM current_period) AS current_total,
+        (SELECT COUNT(*) FROM previous_period) AS previous_total,
+        COUNT(*) FILTER (WHERE sentiment = 'Neutral')            AS neutral_count,
+        COUNT(*) FILTER (WHERE sentiment = 'Highly positive')    AS highly_positive_count,
+        COUNT(*) FILTER (WHERE sentiment = 'Moderately positive')AS moderately_positive_count,
+        COUNT(*) FILTER (WHERE sentiment = 'Slightly negative')  AS slightly_negative_count,
+        COUNT(*) FILTER (WHERE sentiment = 'Highly negative')    AS highly_negative_count
+      FROM current_period
     `;
-    const totalRes = await pool.query(totalSql, [
-      company, start, end, prevStartStr, prevEndStr
+
+    const { rows } = await pool.query(metricsSql, [
+      company,
+      start, end,
+      prevStartStr, prevEndStr
     ]);
-    const { current_total, previous_total } = totalRes.rows[0];
+    const r = rows[0];
 
-    // calculate % change
-    let percent_change;
-    if (previous_total === 0) {
-      percent_change = current_total === 0 ? 0 : 100;
+    // calculate % change for total mentions
+    let pctChange;
+    if (r.previous_total === 0) {
+      pctChange = r.current_total === 0 ? 0 : 100;
     } else {
-      percent_change = ((current_total - previous_total) / previous_total) * 100;
+      pctChange = ((r.current_total - r.previous_total) / r.previous_total) * 100;
     }
-    percent_change = Math.round(percent_change * 100) / 100;
+    pctChange = Math.round(pctChange * 100) / 100;
 
-    // 2) sentiment counts in current period
-    const sentimentSql = `
-      SELECT
-        COUNT(*) FILTER (WHERE sentiment = 'Neutral')::int            AS neutral_count,
-        COUNT(*) FILTER (WHERE sentiment = 'Highly positive')::int    AS highly_positive_count,
-        COUNT(*) FILTER (WHERE sentiment = 'Moderately positive')::int AS moderately_positive_count,
-        COUNT(*) FILTER (WHERE sentiment = 'Slightly negative')::int  AS slightly_negative_count,
-        COUNT(*) FILTER (WHERE sentiment = 'Highly negative')::int    AS highly_negative_count,
-        COUNT(*)::int                                                 AS total_count
-      FROM twitter_mentions
-     WHERE company_name = $1
-       AND created_at::date BETWEEN $2 AND $3
-    `;
-    const sentimentRes = await pool.query(sentimentSql, [company, start, end]);
-    const s = sentimentRes.rows[0];
-
-    // compute percentages of total
-    const pct = (count, total) =>
-      total === 0 ? 0 : Math.round((count / total) * 10000) / 100;
+    // helper to get sentiment % of current total
+    const pctOfTotal = (cnt, total) =>
+      total === 0 ? 0 : Math.round((cnt / total) * 10000) / 100;
 
     res.json({
       total: {
-        current:       current_total,
-        previous:      previous_total,
-        percent_change
+        current:      r.current_total,
+        previous:     r.previous_total,
+        percent_change: pctChange
       },
       neutral: {
-        count:      s.neutral_count,
-        percentage: pct(s.neutral_count, s.total_count)
+        count:      r.neutral_count,
+        percentage: pctOfTotal(r.neutral_count, r.current_total)
       },
       highlyPositive: {
-        count:      s.highly_positive_count,
-        percentage: pct(s.highly_positive_count, s.total_count)
+        count:      r.highly_positive_count,
+        percentage: pctOfTotal(r.highly_positive_count, r.current_total)
       },
       moderatelyPositive: {
-        count:      s.moderately_positive_count,
-        percentage: pct(s.moderately_positive_count, s.total_count)
+        count:      r.moderately_positive_count,
+        percentage: pctOfTotal(r.moderately_positive_count, r.current_total)
       },
       slightlyNegative: {
-        count:      s.slightly_negative_count,
-        percentage: pct(s.slightly_negative_count, s.total_count)
+        count:      r.slightly_negative_count,
+        percentage: pctOfTotal(r.slightly_negative_count, r.current_total)
       },
       highlyNegative: {
-        count:      s.highly_negative_count,
-        percentage: pct(s.highly_negative_count, s.total_count)
+        count:      r.highly_negative_count,
+        percentage: pctOfTotal(r.highly_negative_count, r.current_total)
       }
     });
   } catch (err) {
@@ -139,6 +153,7 @@ exports.mentionMetrics = async (req, res, next) => {
     next(err);
   }
 };
+
 
 /**
  * Mentions listing endpoint
@@ -149,19 +164,37 @@ exports.mentions = async (req, res, next) => {
     if (!email) return res.status(400).json({ error: 'Email is required.' });
 
     const company = await fetchCompanyName(email);
+
+    // union Twitter & Instagram into a unified shape
     const sql = `
       SELECT
         author_name,
         created_at,
-        text,
+        text     AS tweet,
         like_count,
-        reply_count
+        reply_count,
+        'Twitter' AS source
       FROM twitter_mentions
      WHERE company_name = $1
+
+      UNION ALL
+
+      SELECT
+        author_handle AS author_name,
+        created_at,
+        caption       AS tweet,
+        like_count,
+        comment_count AS reply_count,
+        'Instagram'   AS source
+      FROM instagram_mentions
+     WHERE company_name = $1
+
      ORDER BY created_at DESC
     `;
+
     const { rows } = await pool.query(sql, [company]);
     res.json(rows);
+
   } catch (err) {
     if (err.status === 404) return res.status(404).json({ error: err.message });
     next(err);
