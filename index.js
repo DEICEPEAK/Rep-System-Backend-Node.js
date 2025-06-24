@@ -8,6 +8,7 @@ const metricsRoute = require('./routes/metricsRoutes');
 const authRoute    = require('./routes/authRoutes');
 const analyticsRoute = require('./routes/analyticsRoutes'); 
 const socialMediaAnalyticsRoute = require('./routes/socialMediaAnalyticsRoutes'); 
+const businessDetailsRoute = require('./routes/businessDetailsRoutes');
 
 const app = express();
 
@@ -33,6 +34,7 @@ app.use('/api/auth',   authRoute);
 app.use('/api/metrics', metricsRoute);
 app.use('/api/analytics', analyticsRoute);
 app.use('/api/social-media', socialMediaAnalyticsRoute);
+app.use('/api/profile', businessDetailsRoute);
 
 // 4) Health check
 app.get('/health', (_, res) => 
