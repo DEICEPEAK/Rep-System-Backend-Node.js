@@ -6,7 +6,7 @@ const { protect } = require('../middlewares/authMiddleware');
 const ctrl = require('../controllers/profileController');
 
 router.get(  '/',                   protect, ctrl.viewProfile);
-router.put(  '/business-details',   protect, ctrl.editBusinessDetails);
+router.put(  '/edit-business-details',   protect, ctrl.editBusinessDetails);
 router.put(  '/change-password',    protect, ctrl.changePassword);
 router.get(  '/completed-info',     protect, ctrl.completedInfo);
 
