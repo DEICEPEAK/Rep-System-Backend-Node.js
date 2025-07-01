@@ -61,7 +61,40 @@ async function countReviews(company, start, end, cond) {
     pool.query(gmSql, params),
   ]);
   return tp.c + ff.c + gm.c;
+}async function countReviews(company, start, end, cond) {
+  // cond is a SQL snippet like "rating > $4" plus param value(s)
+  const tpSql = `
+    SELECT COUNT(*)::int AS c
+      FROM trustpilot_reviews
+     WHERE company_name = $1
+       AND review_date BETWEEN $2 AND $3
+       AND ${cond.sql}
+  `;
+  const ffSql = `
+    SELECT COUNT(*)::int AS c
+      FROM feefo_reviews
+     WHERE company_name = $1
+       AND review_date BETWEEN $2 AND $3
+       AND ${cond.sql.replace(/rating|review_date/g, 'sentiment')}
+  `;
+  const gmSql = `
+    SELECT COUNT(*)::int AS c
+      FROM google_maps_reviews
+     WHERE company_name = $1
+       AND review_date BETWEEN $2 AND $3
+       AND ${cond.sql}
+  `;
+
+  const params = [company, start, end, ...cond.params];
+  const [tpRes, ffRes, gmRes] = await Promise.all([
+    pool.query(tpSql, params),
+    pool.query(ffSql, params),
+    pool.query(gmSql, params),
+  ]);
+  
+  return tpRes.rows[0].c + ffRes.rows[0].c + gmRes.rows[0].c;
 }
+
 
 // 4) Build each endpoint
 const endpoints = {
