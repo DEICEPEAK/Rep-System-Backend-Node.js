@@ -77,8 +77,8 @@ exports.editBusinessDetails = async (req, res, next) => {
        twitter_username,
        instagram_username,
        feefo_business_info,
-       company_maps_place_id,
-       company_maps_url
+       place_id,
+       place_url
   `;
   try {
     const { rows } = await pool.query(sql, vals);
