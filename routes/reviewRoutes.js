@@ -13,6 +13,6 @@ router.get('/highly-positive',    protect, ctrl.highlyPositiveReviews);
 router.get('/moderately-positive',protect, ctrl.moderatelyPositiveReviews);
 router.get('/slightly-negative',  protect, ctrl.slightlyNegativeReviews);
 router.get('/highly-negative',    protect, ctrl.highlyNegativeReviews);
-// router.get('/all',                protect, ctrl.reviews);
+router.get('/review-thread', 	  protect, ctrl.reviews);
 
 module.exports = router;
