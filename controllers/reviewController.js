@@ -2,7 +2,7 @@
 
 const pool = require('../db/pool');
 
-// 1) Date‐range helper with validation, swap, and logging
+// 1) Date‐range helper with validation, swap, and commented logs
 function getDateRange(query) {
   // Validate date inputs
   ['start_date', 'end_date'].forEach(key => {
@@ -23,28 +23,30 @@ function getDateRange(query) {
 
   // Swap if out of order
   if (start > end) {
-    console.warn(
-      `[getDateRange] start (${start.toISOString().slice(0,10)}) ` +
-      `> end (${end.toISOString().slice(0,10)}); swapping`
-    );
+    // console.warn(
+    //   `[getDateRange] start (${start.toISOString().slice(0,10)}) ` +
+    //   `> end (${end.toISOString().slice(0,10)}); swapping`
+    // );
     [start, end] = [end, start];
   }
 
   // Format YYYY-MM-DD
   const fmt = d => d.toISOString().slice(0, 10);
   const result = { start: fmt(start), end: fmt(end) };
-  console.log(
-    '[getDateRange]',
-    'raw inputs →',
-    `start_date=${query.start_date}`, `end_date=${query.end_date}`,
-    '→ formatted →', result
-  );
+
+  // console.log(
+  //   '[getDateRange]',
+  //   'raw inputs →',
+  //   `start_date=${query.start_date}`, `end_date=${query.end_date}`,
+  //   '→ formatted →', result
+  // );
+
   return result;
 }
 
-// 2) Fetch company_name by user ID (with logging)
+// 2) Fetch company_name by user ID (with commented logs)
 async function fetchCompanyNameById(userId) {
-  console.log('[fetchCompanyNameById] userId=', userId);
+  // console.log('[fetchCompanyNameById] userId=', userId);
   const { rows } = await pool.query(
     `SELECT company_name
        FROM users
@@ -57,19 +59,19 @@ async function fetchCompanyNameById(userId) {
     err.status = 404;
     throw err;
   }
-  console.log('[fetchCompanyNameById] company=', rows[0].company_name);
+  // console.log('[fetchCompanyNameById] company=', rows[0].company_name);
   return rows[0].company_name;
 }
 
-// 3) Generic counter across three tables (with logging)
+// 3) Generic counter across three tables (with commented logs)
 async function countReviews(company, start, end, cond) {
-  console.log(
-    '[countReviews]',
-    'company=', company,
-    'start=', start,
-    'end=', end,
-    'cond=', cond
-  );
+  // console.log(
+  //   '[countReviews]',
+  //   'company=', company,
+  //   'start=', start,
+  //   'end=', end,
+  //   'cond=', cond
+  // );
 
   const tpSql = `
     SELECT COUNT(*)::int AS c
@@ -94,13 +96,13 @@ async function countReviews(company, start, end, cond) {
   `;
 
   const params = [company, start, end, ...cond.params];
-  console.log(
-    '[countReviews]',
-    'tpSql=', tpSql.trim(),
-    'ffSql=', ffSql.trim(),
-    'gmSql=', gmSql.trim(),
-    'params=', params
-  );
+  // console.log(
+  //   '[countReviews]',
+  //   'tpSql=', tpSql.trim(),
+  //   'ffSql=', ffSql.trim(),
+  //   'gmSql=', gmSql.trim(),
+  //   'params=', params
+  // );
 
   const [tpRes, ffRes, gmRes] = await Promise.all([
     pool.query(tpSql, params),
@@ -108,24 +110,24 @@ async function countReviews(company, start, end, cond) {
     pool.query(gmSql, params),
   ]);
 
-  console.log(
-    '[countReviews] counts →',
-    'TP:', tpRes.rows[0].c,
-    'FF:', ffRes.rows[0].c,
-    'GM:', gmRes.rows[0].c
-  );
+  // console.log(
+  //   '[countReviews] counts →',
+  //   'TP:', tpRes.rows[0].c,
+  //   'FF:', ffRes.rows[0].c,
+  //   'GM:', gmRes.rows[0].c
+  // );
   return tpRes.rows[0].c + ffRes.rows[0].c + gmRes.rows[0].c;
 }
 
 // 4) Build each “count” endpoint
 const endpoints = {
-  positive:            { sql: 'rating > $4', params: [3] },
-  neutral:             { sql: 'rating = $4', params: [3] },
-  negative:            { sql: 'rating < $4', params: [3] },
-  highlyPositive:      { sql: 'rating > $4', params: [4] },
-  moderatelyPositive:  { sql: 'rating = $4', params: [4] },
-  slightlyNegative:    { sql: 'rating = $4', params: [2] },
-  highlyNegative:      { sql: 'rating < $4', params: [2] },
+  positive:           { sql: 'rating > $4', params: [3] },
+  neutral:            { sql: 'rating = $4', params: [3] },
+  negative:           { sql: 'rating < $4', params: [3] },
+  highlyPositive:     { sql: 'rating > $4', params: [4] },
+  moderatelyPositive: { sql: 'rating = $4', params: [4] },
+  slightlyNegative:   { sql: 'rating = $4', params: [2] },
+  highlyNegative:     { sql: 'rating < $4', params: [2] },
 };
 
 Object.entries(endpoints).forEach(([key, cond]) => {
@@ -143,14 +145,14 @@ Object.entries(endpoints).forEach(([key, cond]) => {
   };
 });
 
-// 5) Combined “reviews” endpoint (returns all if no dates provided)
+// 5) Combined “reviews” endpoint (with commented logs)
 exports.reviews = async (req, res, next) => {
   try {
-    console.log('[reviews] req.user.id=', req.user.id, 'query=', req.query);
+    // console.log('[reviews] req.user.id=', req.user.id, 'query=', req.query);
 
     const userId = req.user.id;
     const company = await fetchCompanyNameById(userId);
-    console.log('[reviews] company=', company);
+    // console.log('[reviews] company=', company);
 
     const hasDateFilter = !!(req.query.start_date || req.query.end_date);
     let dateClause = '';
@@ -158,11 +160,11 @@ exports.reviews = async (req, res, next) => {
 
     if (hasDateFilter) {
       const { start, end } = getDateRange(req.query);
-      console.log('[reviews] date filter applied: start=', start, 'end=', end);
+      // console.log('[reviews] date filter applied: start=', start, 'end=', end);
       dateClause = 'AND review_date BETWEEN $2 AND $3';
       params.push(start, end);
     } else {
-      console.log('[reviews] no date filter, fetching all reviews');
+      // console.log('[reviews] no date filter, fetching all reviews');
     }
 
     // Trustpilot
@@ -204,28 +206,28 @@ exports.reviews = async (req, res, next) => {
        ${dateClause}
     `;
 
-    console.log('[reviews] SQL queries built, params=', params);
+    // console.log('[reviews] SQL queries built, params=', params);
     const [tpRes, ffRes, gmRes] = await Promise.all([
       pool.query(tpQ, params),
       pool.query(ffQ, params),
       pool.query(gmQ, params),
     ]);
 
-    console.log(
-      '[reviews] raw row counts →',
-      'Trustpilot:', tpRes.rows.length,
-      'Feefo:',      ffRes.rows.length,
-      'GoogleMaps:', gmRes.rows.length
-    );
+    // console.log(
+    //   '[reviews] raw row counts →',
+    //   'Trustpilot:', tpRes.rows.length,
+    //   'Feefo:',      ffRes.rows.length,
+    //   'GoogleMaps:', gmRes.rows.length
+    // );
 
     // Tag source
     const tag = (rows, source) => rows.map(r => ({ ...r, source }));
-    let all = [
+    const all = [
       ...tag(tpRes.rows, 'Trustpilot'),
       ...tag(ffRes.rows, 'Feefo'),
       ...tag(gmRes.rows, 'Google Maps'),
     ];
-    console.log('[reviews] combined rows before sort:', all.length);
+    // console.log('[reviews] combined rows before sort:', all.length);
 
     // Sort newest first
     all.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -256,7 +258,7 @@ exports.reviews = async (req, res, next) => {
       };
     });
 
-    console.log('[reviews] final results count:', results.length);
+    // console.log('[reviews] final results count:', results.length);
     res.json(results);
 
   } catch (err) {
