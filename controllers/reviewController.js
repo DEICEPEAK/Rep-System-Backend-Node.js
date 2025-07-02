@@ -44,38 +44,7 @@ async function countReviews(company, start, end, cond) {
       FROM feefo_reviews
      WHERE company_name = $1
        AND review_date BETWEEN $2 AND $3
-       AND ${cond.sql.replace(/rating|review_date/g, 'sentiment')}
-  `;
-  const gmSql = `
-    SELECT COUNT(*)::int AS c
-      FROM google_maps_reviews
-     WHERE company_name = $1
-       AND review_date BETWEEN $2 AND $3
        AND ${cond.sql}
-  `;
-
-  const params = [company, start, end, ...cond.params];
-  const [[tp], [ff], [gm]] = await Promise.all([
-    pool.query(tpSql, params),
-    pool.query(ffSql, params),
-    pool.query(gmSql, params),
-  ]);
-  return tp.c + ff.c + gm.c;
-}async function countReviews(company, start, end, cond) {
-  // cond is a SQL snippet like "rating > $4" plus param value(s)
-  const tpSql = `
-    SELECT COUNT(*)::int AS c
-      FROM trustpilot_reviews
-     WHERE company_name = $1
-       AND review_date BETWEEN $2 AND $3
-       AND ${cond.sql}
-  `;
-  const ffSql = `
-    SELECT COUNT(*)::int AS c
-      FROM feefo_reviews
-     WHERE company_name = $1
-       AND review_date BETWEEN $2 AND $3
-       AND ${cond.sql.replace(/rating|review_date/g, 'sentiment')}
   `;
   const gmSql = `
     SELECT COUNT(*)::int AS c
@@ -94,7 +63,6 @@ async function countReviews(company, start, end, cond) {
   
   return tpRes.rows[0].c + ffRes.rows[0].c + gmRes.rows[0].c;
 }
-
 
 // 4) Build each endpoint
 const endpoints = {
@@ -122,6 +90,7 @@ Object.entries(endpoints).forEach(([key, cond]) => {
   };
 });
 
+
 // 5) Combined “reviews” endpoint
 exports.reviews = async (req, res, next) => {
   try {
@@ -145,9 +114,9 @@ exports.reviews = async (req, res, next) => {
     // Feefo
     const ffQ = `
       SELECT
-        sentiment     AS rating,
+        rating,
         service_review AS title,
-        COALESCE(product_review, service_review) AS body,
+        COALESCE(NULLIF(product_review, ''), service_review) AS body,
         customer_name AS author,
         review_date   AS created_at
       FROM feefo_reviews
