@@ -94,7 +94,14 @@ async function countReviews(company, start, end, cond) {
        AND review_date BETWEEN $2 AND $3
        AND ${cond.sql}
   `;
-
+  const rdSql = `
+    SELECT COUNT(*)::int AS c
+      FROM reddit_posts
+     WHERE company_name = $1
+       AND review_date BETWEEN $2 AND $3
+       AND ${cond.sql}
+  `;
+ 
   const params = [company, start, end, ...cond.params];
   // console.log(
   //   '[countReviews]',
@@ -104,10 +111,11 @@ async function countReviews(company, start, end, cond) {
   //   'params=', params
   // );
 
-  const [tpRes, ffRes, gmRes] = await Promise.all([
+  const [tpRes, ffRes, gmRes, rdRes] = await Promise.all([
     pool.query(tpSql, params),
     pool.query(ffSql, params),
     pool.query(gmSql, params),
+    pool.query(rdSql, params),
   ]);
 
   // console.log(
@@ -116,7 +124,7 @@ async function countReviews(company, start, end, cond) {
   //   'FF:', ffRes.rows[0].c,
   //   'GM:', gmRes.rows[0].c
   // );
-  return tpRes.rows[0].c + ffRes.rows[0].c + gmRes.rows[0].c;
+  return tpRes.rows[0].c + ffRes.rows[0].c + gmRes.rows[0].c + rdRes.rows[0].c;
 }
 
 // 4) Build each “count” endpoint
@@ -206,11 +214,28 @@ exports.reviews = async (req, res, next) => {
        ${dateClause}
     `;
 
+    // Reddit posts
+    const rdQ = `
+      SELECT
+        rating,
+        title    AS title,
+        COALESCE(NULLIF(full_review, ''), full_review) AS body,
+        author   AS author,
+        review_date   AS created_at
+      FROM reddit_posts
+     WHERE company_name = $1
+       ${dateClause}
+    `;
+
+
+
+
     // console.log('[reviews] SQL queries built, params=', params);
-    const [tpRes, ffRes, gmRes] = await Promise.all([
+    const [tpRes, ffRes, gmRes, rdRes] = await Promise.all([
       pool.query(tpQ, params),
       pool.query(ffQ, params),
       pool.query(gmQ, params),
+      pool.query(rdQ, params),
     ]);
 
     // console.log(
@@ -226,6 +251,7 @@ exports.reviews = async (req, res, next) => {
       ...tag(tpRes.rows, 'Trustpilot'),
       ...tag(ffRes.rows, 'Feefo'),
       ...tag(gmRes.rows, 'Google Maps'),
+      ...tag(rdRes.rows, 'Reddit'),
     ];
     // console.log('[reviews] combined rows before sort:', all.length);
 
