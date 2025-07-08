@@ -4,6 +4,8 @@ const cors    = require('cors');
 const config  = require('./config');
 require('dotenv').config();
 
+
+const sentimentMiddleware = require('./middlewares/sentimentMiddleware');
 const metricsRoute = require('./routes/metricsRoutes');
 const authRoute    = require('./routes/authRoutes');
 const reviewRoutes = require('./routes/reviewRoutes'); 
@@ -29,6 +31,8 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+
+sentimentMiddleware();
 // 3) Your routes
 app.use('/api/auth',   authRoute);
 app.use('/api/metrics', metricsRoute);

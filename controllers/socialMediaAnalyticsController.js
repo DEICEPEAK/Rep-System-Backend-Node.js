@@ -97,23 +97,23 @@ exports.mentionMetrics = async (req, res, next) => {
     // single SQL to union both tables for current & previous, then aggregate
     const metricsSql = `
       WITH current_period AS (
-        SELECT sentiment
+        SELECT rating
           FROM twitter_mentions
          WHERE company_name = $1
            AND created_at::date BETWEEN $2 AND $3
         UNION ALL
-        SELECT sentiment
+        SELECT rating
           FROM instagram_mentions
          WHERE company_name = $1
            AND created_at::date BETWEEN $2 AND $3
       ),
       previous_period AS (
-        SELECT sentiment
+        SELECT rating
           FROM twitter_mentions
          WHERE company_name = $1
            AND created_at::date BETWEEN $4 AND $5
         UNION ALL
-        SELECT sentiment
+        SELECT rating
           FROM instagram_mentions
          WHERE company_name = $1
            AND created_at::date BETWEEN $4 AND $5
@@ -121,11 +121,11 @@ exports.mentionMetrics = async (req, res, next) => {
       SELECT
         (SELECT COUNT(*) FROM current_period) AS current_total,
         (SELECT COUNT(*) FROM previous_period) AS previous_total,
-        COUNT(*) FILTER (WHERE sentiment = 'Neutral')            AS neutral_count,
-        COUNT(*) FILTER (WHERE sentiment = 'Highly positive')    AS highly_positive_count,
-        COUNT(*) FILTER (WHERE sentiment = 'Moderately positive')AS moderately_positive_count,
-        COUNT(*) FILTER (WHERE sentiment = 'Slightly negative')  AS slightly_negative_count,
-        COUNT(*) FILTER (WHERE sentiment = 'Highly negative')    AS highly_negative_count
+        COUNT(*) FILTER (WHERE rating = 3)            AS neutral_count,
+        COUNT(*) FILTER (WHERE rating = 5)    AS highly_positive_count,
+        COUNT(*) FILTER (WHERE rating = 4)  AS moderately_positive_count,
+        COUNT(*) FILTER (WHERE rating = 2)  AS slightly_negative_count,
+        COUNT(*) FILTER (WHERE rating = 1)    AS highly_negative_count
       FROM current_period
     `;
 
@@ -213,6 +213,7 @@ exports.mentions = async (req, res, next) => {
         text        AS tweet,
         like_count,
         reply_count,
+        rating,
         'Twitter'   AS source
       FROM twitter_mentions
      WHERE company_name = $1
@@ -226,6 +227,7 @@ exports.mentions = async (req, res, next) => {
         caption       AS tweet,
         like_count,
         comment_count AS reply_count,
+        rating,
         'Instagram'   AS source
       FROM instagram_mentions
      WHERE company_name = $1
