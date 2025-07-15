@@ -79,6 +79,16 @@ async function loadMetrics(req) {
         FROM instagram_mentions
        WHERE company_name = $1
          AND created_at::date BETWEEN $2 AND $3
+      UNION ALL
+      SELECT rating
+        FROM facebook_posts
+       WHERE company_name = $1
+         AND created_at::date BETWEEN $2 AND $3
+      UNION ALL
+      SELECT rating
+        FROM linkedin_posts
+       WHERE company_name = $1
+         AND posted_at_iso::date BETWEEN $2 AND $3
     ),
     previous_period AS (
       SELECT rating
@@ -90,6 +100,16 @@ async function loadMetrics(req) {
         FROM instagram_mentions
        WHERE company_name = $1
          AND created_at::date BETWEEN $4 AND $5
+      UNION ALL
+      SELECT rating
+        FROM facebook_posts
+       WHERE company_name = $1
+         AND created_at::date BETWEEN $4 AND $5
+      UNION ALL
+      SELECT rating
+        FROM linkedin_posts
+       WHERE company_name = $1
+         AND posted_at_iso::date BETWEEN $4 AND $5
     )
     SELECT
       (SELECT COUNT(*) FROM current_period) AS current_total,
@@ -247,27 +267,30 @@ exports.mentions = async (req, res, next) => {
 
     // Determine if date filtering is requested
     const hasDateFilter = !!(req.query.start_date || req.query.end_date);
-    let dateClause = '';
     const params = [company];
 
+    // Build separate date filters for created_at vs. posted_at_iso
+    let twitterDateClause  = '';
+    let linkedinDateClause = '';
     if (hasDateFilter) {
       const { start, end } = getDateRange(req.query, false);
-      dateClause = 'AND created_at::date BETWEEN $2 AND $3';
+      twitterDateClause  = 'AND created_at::date    BETWEEN $2 AND $3';
+      linkedinDateClause = 'AND posted_at_iso::date BETWEEN $2 AND $3';
       params.push(start, end);
     }
 
-    // Combine Twitter & Instagram
+    // Combine Twitter, Instagram, Facebook, and LinkedIn posts
     const sql = `
       SELECT
         author_name,
         created_at,
-        text        AS tweet,
+        text          AS tweet,
         like_count,
         reply_count,
-        'Twitter'   AS source
+        'Twitter'     AS source
       FROM twitter_mentions
-     WHERE company_name = $1
-       ${dateClause}
+      WHERE company_name = $1
+        ${twitterDateClause}
 
       UNION ALL
 
@@ -279,10 +302,36 @@ exports.mentions = async (req, res, next) => {
         comment_count AS reply_count,
         'Instagram'   AS source
       FROM instagram_mentions
-     WHERE company_name = $1
-       ${dateClause}
+      WHERE company_name = $1
+        ${twitterDateClause}
 
-     ORDER BY created_at DESC
+      UNION ALL
+
+      SELECT
+        author_name,
+        created_at,
+        message       AS tweet,
+        reactions_count AS like_count,
+        comments_count  AS reply_count,
+        'Facebook'    AS source
+      FROM facebook_posts
+      WHERE company_name = $1
+        ${twitterDateClause}
+
+      UNION ALL
+
+      SELECT
+        author_name,
+        posted_at_iso AS created_at,
+        text          AS tweet,
+        total_reactions AS like_count,
+        comments_count  AS reply_count,
+        'LinkedIn'    AS source
+      FROM linkedin_posts
+      WHERE company_name = $1
+        ${linkedinDateClause}
+
+      ORDER BY created_at DESC
     `;
 
     const { rows } = await pool.query(sql, params);
@@ -294,3 +343,4 @@ exports.mentions = async (req, res, next) => {
     next(err);
   }
 };
+

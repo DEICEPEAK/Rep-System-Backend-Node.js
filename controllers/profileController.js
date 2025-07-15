@@ -11,7 +11,8 @@ const DETAIL_FIELDS = [
   'twitter_username',
   'instagram_username',
   'feefo_business_info',
-  'place_id',
+  'facebook_username',
+  'linkedin_username',
   'place_url'
 ];
 
@@ -31,7 +32,9 @@ exports.viewProfile = async (req, res, next) => {
          company_web_address,
          instagram_username,
          feefo_business_info,
-         place_id,
+         twitter_username,
+         facebook_username,
+         linkedin_username,
          place_url
        FROM users
        WHERE id = $1
@@ -77,7 +80,8 @@ exports.editBusinessDetails = async (req, res, next) => {
        twitter_username,
        instagram_username,
        feefo_business_info,
-       place_id,
+       facebook_username,
+       linkedin_username,
        place_url
   `;
   try {

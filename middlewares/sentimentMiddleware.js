@@ -1,3 +1,5 @@
+// File: middlewares/sentimentMiddleware.js
+
 const axios = require('axios');
 const cron = require('node-cron');
 const pool = require('../db/pool');
@@ -33,6 +35,8 @@ async function processSentimentForPosts() {
     { table: 'feefo_reviews',      pk: 'id',       texts: ['service_review','product_review'] },
     { table: 'google_maps_reviews',pk: 'id',       texts: ['review_text'] },
     { table: 'reddit_posts',       pk: 'id',       texts: ['title','full_review'] },
+    { table: 'facebook_posts',     pk: 'post_id',       texts: ['message'] },
+    { table: 'linkedin_posts',     pk: 'id',       texts: ['text'] }
   ];
 
   for (const src of sources) {
