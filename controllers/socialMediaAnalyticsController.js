@@ -282,7 +282,7 @@ exports.mentions = async (req, res, next) => {
     // Combine Twitter, Instagram, Facebook, and LinkedIn posts
     const sql = `
       SELECT
-        author_name,
+        author_handle,
         created_at,
         text          AS tweet,
         like_count,
