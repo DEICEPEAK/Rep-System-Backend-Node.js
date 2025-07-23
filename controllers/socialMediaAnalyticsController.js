@@ -281,7 +281,7 @@ exports.mentions = async (req, res, next) => {
 
     const sql = `
       SELECT
-        author_name,
+        author_handle,
         created_at,
         tweet,
         like_count,
