@@ -298,7 +298,7 @@ exports.mentions = async (req, res, next) => {
         source
       FROM (
         SELECT
-          author_name,
+          author_handle,
           created_at,
           text             AS tweet,
           like_count,
