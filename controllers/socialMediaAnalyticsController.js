@@ -279,58 +279,78 @@ exports.mentions = async (req, res, next) => {
       params.push(start, end);
     }
 
-    // Combine Twitter, Instagram, Facebook, and LinkedIn posts
     const sql = `
       SELECT
         author_name,
         created_at,
-        text          AS tweet,
+        tweet,
         like_count,
         reply_count,
-        'Twitter'     AS source
-      FROM twitter_mentions
-      WHERE company_name = $1
-        ${twitterDateClause}
+        rating,
+        CASE
+          WHEN rating = 5 THEN 'Highly Positive'
+          WHEN rating = 4 THEN 'Moderately Positive'
+          WHEN rating = 3 THEN 'Neutral'
+          WHEN rating = 2 THEN 'Slightly Negative'
+          WHEN rating = 1 THEN 'Highly Negative'
+          ELSE 'Unknown'
+        END AS sentiment_class,
+        source
+      FROM (
+        SELECT
+          author_name,
+          created_at,
+          text             AS tweet,
+          like_count,
+          reply_count,
+          rating,
+          'Twitter'        AS source
+        FROM twitter_mentions
+        WHERE company_name = $1
+          ${twitterDateClause}
 
-      UNION ALL
+        UNION ALL
 
-      SELECT
-        author_handle AS author_name,
-        created_at,
-        caption       AS tweet,
-        like_count,
-        comment_count AS reply_count,
-        'Instagram'   AS source
-      FROM instagram_mentions
-      WHERE company_name = $1
-        ${twitterDateClause}
+        SELECT
+          author_handle    AS author_name,
+          created_at,
+          caption          AS tweet,
+          like_count,
+          comment_count    AS reply_count,
+          rating,
+          'Instagram'      AS source
+        FROM instagram_mentions
+        WHERE company_name = $1
+          ${twitterDateClause}
 
-      UNION ALL
+        UNION ALL
 
-      SELECT
-        author_name,
-        created_at,
-        message       AS tweet,
-        reactions_count AS like_count,
-        comments_count  AS reply_count,
-        'Facebook'    AS source
-      FROM facebook_posts
-      WHERE company_name = $1
-        ${twitterDateClause}
+        SELECT
+          author_name,
+          created_at,
+          message          AS tweet,
+          reactions_count  AS like_count,
+          comments_count   AS reply_count,
+          rating,
+          'Facebook'       AS source
+        FROM facebook_posts
+        WHERE company_name = $1
+          ${twitterDateClause}
 
-      UNION ALL
+        UNION ALL
 
-      SELECT
-        author_name,
-        posted_at_iso AS created_at,
-        text          AS tweet,
-        total_reactions AS like_count,
-        comments_count  AS reply_count,
-        'LinkedIn'    AS source
-      FROM linkedin_posts
-      WHERE company_name = $1
-        ${linkedinDateClause}
-
+        SELECT
+          author_name,
+          posted_at_iso    AS created_at,
+          text             AS tweet,
+          total_reactions  AS like_count,
+          comments_count   AS reply_count,
+          rating,
+          'LinkedIn'       AS source
+        FROM linkedin_posts
+        WHERE company_name = $1
+          ${linkedinDateClause}
+      ) AS combined
       ORDER BY created_at DESC
     `;
 
