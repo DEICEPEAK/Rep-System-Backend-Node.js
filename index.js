@@ -4,13 +4,13 @@ const cors    = require('cors');
 const config  = require('./config');
 require('dotenv').config();
 
-
 const sentimentMiddleware = require('./middlewares/sentimentMiddleware');
 const metricsRoute = require('./routes/metricsRoutes');
 const authRoute    = require('./routes/authRoutes');
 const reviewRoutes = require('./routes/reviewRoutes'); 
 const socialMediaAnalyticsRoute = require('./routes/socialMediaAnalyticsRoutes'); 
 const profileRoutes = require('./routes/profileRoutes');
+const keywordRoutes = require('./routes/keywordRoutes'); 
 
 const app = express();
 
@@ -31,7 +31,6 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-
 sentimentMiddleware();
 // 3) Your routes
 app.use('/api/auth',   authRoute);
@@ -39,6 +38,8 @@ app.use('/api/metrics', metricsRoute);
 app.use('/api/review', reviewRoutes);
 app.use('/api/social-media', socialMediaAnalyticsRoute);
 app.use('/api/profile', profileRoutes);
+app.use('/api/keyword', keywordRoutes);
+
 
 // 4) Health check
 app.get('/health', (_, res) => 

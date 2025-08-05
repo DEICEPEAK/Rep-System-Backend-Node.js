@@ -29,4 +29,7 @@ router.get('/highly-negative', analytics.highlyNegativeMetrics);
 // 7) Mentions listing
 router.get('/mentions', analytics.mentions);
 
+// 8) Stats Metrics
+router.get('/statsToday', analytics.statsToday);
+
 module.exports = router;

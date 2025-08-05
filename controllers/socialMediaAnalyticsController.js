@@ -20,7 +20,7 @@ function getDateRange(query, defaultToSevenDays = true) {
   let start = query.start_date
     ? new Date(query.start_date)
     : defaultToSevenDays
-      ? new Date((end || new Date()).getTime() - 7 * 24 * 60 * 60 * 1000)
+      ? new Date((end || new Date()).getTime() - 30 * 24 * 60 * 60 * 1000)
       : null;
 
   if (!start && !end) {
@@ -279,78 +279,58 @@ exports.mentions = async (req, res, next) => {
       params.push(start, end);
     }
 
+    // Combine Twitter, Instagram, Facebook, and LinkedIn posts
     const sql = `
       SELECT
         author_handle,
         created_at,
-        tweet,
+        text          AS tweet,
         like_count,
         reply_count,
-        rating,
-        CASE
-          WHEN rating = 5 THEN 'Highly Positive'
-          WHEN rating = 4 THEN 'Moderately Positive'
-          WHEN rating = 3 THEN 'Neutral'
-          WHEN rating = 2 THEN 'Slightly Negative'
-          WHEN rating = 1 THEN 'Highly Negative'
-          ELSE 'Unknown'
-        END AS sentiment_class,
-        source
-      FROM (
-        SELECT
-          author_handle,
-          created_at,
-          text             AS tweet,
-          like_count,
-          reply_count,
-          rating,
-          'Twitter'        AS source
-        FROM twitter_mentions
-        WHERE company_name = $1
-          ${twitterDateClause}
+        'Twitter'     AS source
+      FROM twitter_mentions
+      WHERE company_name = $1
+        ${twitterDateClause}
 
-        UNION ALL
+      UNION ALL
 
-        SELECT
-          author_handle    AS author_name,
-          created_at,
-          caption          AS tweet,
-          like_count,
-          comment_count    AS reply_count,
-          rating,
-          'Instagram'      AS source
-        FROM instagram_mentions
-        WHERE company_name = $1
-          ${twitterDateClause}
+      SELECT
+        author_handle AS author_name,
+        created_at,
+        caption       AS tweet,
+        like_count,
+        comment_count AS reply_count,
+        'Instagram'   AS source
+      FROM instagram_mentions
+      WHERE company_name = $1
+        ${twitterDateClause}
 
-        UNION ALL
+      UNION ALL
 
-        SELECT
-          author_name,
-          created_at,
-          message          AS tweet,
-          reactions_count  AS like_count,
-          comments_count   AS reply_count,
-          rating,
-          'Facebook'       AS source
-        FROM facebook_posts
-        WHERE company_name = $1
-          ${twitterDateClause}
+      SELECT
+        author_name,
+        created_at,
+        message       AS tweet,
+        reactions_count AS like_count,
+        comments_count  AS reply_count,
+        'Facebook'    AS source
+      FROM facebook_posts
+      WHERE company_name = $1
+        ${twitterDateClause}
 
-        UNION ALL
+      UNION ALL
 
-        SELECT
-          author_name,
-          posted_at_iso    AS created_at,
-          text             AS tweet,
-          total_reactions  AS like_count,
-          comments_count   AS reply_count,
-          rating,
-          'LinkedIn'       AS source
-        FROM linkedin_posts
-        WHERE company_name = $1
-          ${linkedinDateClause}
-      ) AS combined
+      SELECT
+        author_name,
+        posted_at_iso AS created_at,
+        text          AS tweet,
+        total_reactions AS like_count,
+        comments_count  AS reply_count,
+        'LinkedIn'    AS source
+      FROM linkedin_posts
+      WHERE company_name = $1
+        ${linkedinDateClause}
+
       ORDER BY created_at DESC
     `;
 
@@ -364,3 +344,141 @@ exports.mentions = async (req, res, next) => {
   }
 };
 
+
+
+const bigStatsSql = `
+WITH company AS (
+  SELECT company_name
+  FROM users
+  WHERE id = $1
+  LIMIT 1
+),
+posts_today AS (
+  SELECT COUNT(*) AS cnt
+  FROM (
+    SELECT 1 FROM twitter_mentions
+    WHERE company_name = (SELECT company_name FROM company) 
+      AND created_at::date = CURRENT_DATE
+    UNION ALL
+    SELECT 1 FROM instagram_mentions
+    WHERE company_name = (SELECT company_name FROM company) 
+      AND created_at::date = CURRENT_DATE
+    UNION ALL
+    SELECT 1 FROM facebook_posts
+    WHERE company_name = (SELECT company_name FROM company) 
+      AND created_at::date = CURRENT_DATE
+    UNION ALL
+    SELECT 1 FROM linkedin_posts
+    WHERE company_name = (SELECT company_name FROM company) 
+      AND posted_at_iso::date = CURRENT_DATE
+  ) t
+),
+followers_today AS (
+  SELECT COALESCE(SUM(followers), 0) AS followers_now
+  FROM (
+    ( 
+      SELECT DISTINCT ON (twitter_username) followers
+      FROM twitter_user_stats
+      WHERE company_name = (SELECT company_name FROM company)
+        AND fetched_at::date = CURRENT_DATE
+      ORDER BY twitter_username, fetched_at DESC
+    )
+    UNION ALL
+    (
+      SELECT DISTINCT ON (instagram_username) followers
+      FROM instagram_user_stats
+      WHERE company_name = (SELECT company_name FROM company)
+        AND fetched_at::date = CURRENT_DATE
+      ORDER BY instagram_username, fetched_at DESC
+    )
+  ) f
+),
+followers_yesterday AS (
+  SELECT COALESCE(SUM(followers), 0) AS followers_prev
+  FROM (
+    (
+      SELECT DISTINCT ON (twitter_username) followers
+      FROM twitter_user_stats
+      WHERE company_name = (SELECT company_name FROM company)
+        AND fetched_at::date = CURRENT_DATE - 1
+      ORDER BY twitter_username, fetched_at DESC
+    )
+    UNION ALL
+    (
+      SELECT DISTINCT ON (instagram_username) followers
+      FROM instagram_user_stats
+      WHERE company_name = (SELECT company_name FROM company)
+        AND fetched_at::date = CURRENT_DATE - 1
+      ORDER BY instagram_username, fetched_at DESC
+    )
+  ) f
+),
+engagement_today AS (
+  SELECT
+    COALESCE(SUM(like_count), 0) +
+    COALESCE(SUM(reply_count), 0) +
+    COALESCE(SUM(retweet_count), 0) +
+    COALESCE(SUM(view_count), 0) +
+    COALESCE(SUM(comment_count), 0) +
+    COALESCE(SUM(reactions_count), 0) +
+    COALESCE(SUM(share_count), 0) +
+    COALESCE(SUM(total_reactions), 0) AS interactions
+  FROM (
+    SELECT 
+      like_count, reply_count, retweet_count, view_count,
+      0 AS comment_count,
+      0 AS reactions_count,
+      0 AS share_count,
+      0 AS total_reactions
+    FROM twitter_mentions
+    WHERE company_name = (SELECT company_name FROM company)
+      AND created_at::date = CURRENT_DATE
+    UNION ALL
+    SELECT 
+      like_count, 0, 0, 0, 
+      comment_count, 0, 0, 0
+    FROM instagram_mentions
+    WHERE company_name = (SELECT company_name FROM company)
+      AND created_at::date = CURRENT_DATE
+    UNION ALL
+    SELECT 
+      0, 0, 0, 0,
+      comments_count, reactions_count, share_count, 0
+    FROM facebook_posts
+    WHERE company_name = (SELECT company_name FROM company)
+      AND created_at::date = CURRENT_DATE
+    UNION ALL
+    SELECT 
+      0, 0, 0, 0,
+      comments_count, 0, 0, total_reactions
+    FROM linkedin_posts
+    WHERE company_name = (SELECT company_name FROM company)
+      AND posted_at_iso::date = CURRENT_DATE
+  ) e
+)
+SELECT
+  (SELECT cnt FROM posts_today) AS posts_today,
+  (SELECT followers_now FROM followers_today) -
+  (SELECT followers_prev FROM followers_yesterday) AS new_followers,
+  CASE
+    WHEN (SELECT followers_now FROM followers_today) = 0 THEN 0
+    ELSE ROUND(
+      (SELECT interactions FROM engagement_today)::numeric /
+      (SELECT followers_now FROM followers_today)::numeric * 100, 
+      2
+    )
+  END AS engagement_rate;
+`;
+
+/**
+ * Big stats endpoint for today's posts, new followers, and engagement rate.
+ */
+exports.statsToday = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { rows } = await pool.query(bigStatsSql, [userId]);
+    res.json(rows[0]);
+  } catch (err) {
+    next(err);
+  }
+};

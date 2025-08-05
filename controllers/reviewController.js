@@ -19,7 +19,7 @@ function getDateRange(query) {
     : new Date();
   let start = query.start_date
     ? new Date(query.start_date)
-    : new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+    : new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   // Swap if out of order
   if (start > end) {
@@ -290,6 +290,81 @@ exports.reviews = async (req, res, next) => {
   } catch (err) {
     if (err.status === 400) return res.status(400).json({ error: err.message });
     if (err.status === 404) return res.status(404).json({ error: err.message });
+    next(err);
+  }
+};
+
+
+const reviewStatsSql = `
+WITH company AS (
+  SELECT company_name
+  FROM users
+  WHERE id = $1
+  LIMIT 1
+),
+reviews_today AS (
+  /* Google Maps – includes possible owner response */
+  SELECT
+    rating,
+    (owner_response IS NOT NULL) AS responded
+  FROM google_maps_reviews
+  WHERE company_name = (SELECT company_name FROM company)
+    AND review_date = CURRENT_DATE
+
+  UNION ALL
+  /* Trustpilot – placeholder responded = FALSE until you store replies */
+  SELECT
+    rating,
+    FALSE AS responded
+  FROM trustpilot_reviews
+  WHERE company_name = (SELECT company_name FROM company)
+    AND review_date = CURRENT_DATE
+
+  UNION ALL
+  /* Feefo */
+  SELECT
+    rating,
+    FALSE AS responded
+  FROM feefo_reviews
+  WHERE company_name = (SELECT company_name FROM company)
+    AND review_date = CURRENT_DATE
+
+  UNION ALL
+  /* Reddit posts (rated by your model) */
+  SELECT
+    rating,
+    FALSE AS responded
+  FROM reddit_posts
+  WHERE company_name = (SELECT company_name FROM company)
+    AND review_date = CURRENT_DATE
+)
+SELECT
+  COUNT(*)                           AS new_reviews,
+  COALESCE(ROUND(AVG(rating), 2), 0) AS average_rating,
+  CASE
+    WHEN COUNT(*) = 0
+      THEN 0
+    ELSE ROUND(
+      SUM(CASE WHEN responded THEN 1 ELSE 0 END)::numeric
+      / COUNT(*)::numeric * 100, 2
+    )
+  END                                AS response_rate
+FROM reviews_today;
+`;
+
+
+/**
+ *  Review KPIs for “today” (new reviews, avg rating, response rate)
+ *  Route:  GET /reviews/stats/today
+ */
+exports.reviewStatsToday = async (req, res, next) => {
+  try {
+    const userId  = req.user.id;
+    const { rows } = await pool.query(reviewStatsSql, [userId]);
+
+    // rows[0] = { new_reviews, average_rating, response_rate }
+    res.json(rows[0]);
+  } catch (err) {
     next(err);
   }
 };
