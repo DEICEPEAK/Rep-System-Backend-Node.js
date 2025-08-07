@@ -279,6 +279,24 @@ exports.mentions = async (req, res, next) => {
       params.push(start, end);
     }
 
+    // Function to classify sentiment based on rating
+    const getSentiment = (rating) => {
+      switch (rating) {
+        case 5:
+          return 'Highly Positive';
+        case 4:
+          return 'Moderately Positive';
+        case 3:
+          return 'Neutral';
+        case 2:
+          return 'Slightly Negative';
+        case 1:
+          return 'Highly Negative';
+        default:
+          return 'Unknown';
+      }
+    };
+
     // Combine Twitter, Instagram, Facebook, and LinkedIn posts
     const sql = `
       SELECT
@@ -287,6 +305,7 @@ exports.mentions = async (req, res, next) => {
         text          AS tweet,
         like_count,
         reply_count,
+        rating,
         'Twitter'     AS source
       FROM twitter_mentions
       WHERE company_name = $1
@@ -300,6 +319,7 @@ exports.mentions = async (req, res, next) => {
         caption       AS tweet,
         like_count,
         comment_count AS reply_count,
+        rating,
         'Instagram'   AS source
       FROM instagram_mentions
       WHERE company_name = $1
@@ -313,6 +333,7 @@ exports.mentions = async (req, res, next) => {
         message       AS tweet,
         reactions_count AS like_count,
         comments_count  AS reply_count,
+        rating,
         'Facebook'    AS source
       FROM facebook_posts
       WHERE company_name = $1
@@ -326,6 +347,7 @@ exports.mentions = async (req, res, next) => {
         text          AS tweet,
         total_reactions AS like_count,
         comments_count  AS reply_count,
+        rating,
         'LinkedIn'    AS source
       FROM linkedin_posts
       WHERE company_name = $1
@@ -335,7 +357,14 @@ exports.mentions = async (req, res, next) => {
     `;
 
     const { rows } = await pool.query(sql, params);
-    res.json(rows);
+
+    // Add sentiment classification to each result based on rating
+    const enrichedRows = rows.map(row => ({
+      ...row,
+      sentiment: getSentiment(row.rating)  // Add sentiment based on the rating
+    }));
+
+    res.json(enrichedRows);
 
   } catch (err) {
     if (err.status === 404) return res.status(404).json({ error: err.message });
