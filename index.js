@@ -10,7 +10,12 @@ const authRoute    = require('./routes/authRoutes');
 const reviewRoutes = require('./routes/reviewRoutes'); 
 const socialMediaAnalyticsRoute = require('./routes/socialMediaAnalyticsRoutes'); 
 const profileRoutes = require('./routes/profileRoutes');
-//const keywordRoutes = require('./routes/keywordRoutes'); 
+const keywordRoutes = require('./routes/keywordRoutes'); 
+const translationRoutes = require('./routes/translationRoutes'); 
+const { makeGeminiClient } = require('./services/geminiClientImpl');
+
+const geminiClient = makeGeminiClient({ apiKey: process.env.GEMINI_API_KEY });
+
 
 const app = express();
 
@@ -38,8 +43,10 @@ app.use('/api/metrics', metricsRoute);
 app.use('/api/review', reviewRoutes);
 app.use('/api/social-media', socialMediaAnalyticsRoute);
 app.use('/api/profile', profileRoutes);
-//app.use('/api/keyword', keywordRoutes);
+app.use('/api/keyword', keywordRoutes);
+app.use('/api/translation', translationRoutes);
 
+app.set('geminiClient', geminiClient);
 
 // 4) Health check
 app.get('/health', (_, res) => 
