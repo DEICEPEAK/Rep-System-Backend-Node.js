@@ -382,34 +382,34 @@ WITH company AS (
   WHERE id = $1
   LIMIT 1
 ),
-posts_today AS (
+posts_recent AS (
   SELECT COUNT(*) AS cnt
   FROM (
     SELECT 1 FROM twitter_mentions
     WHERE company_name = (SELECT company_name FROM company) 
-      AND created_at::date = CURRENT_DATE
+      AND created_at::date >= CURRENT_DATE - 30
     UNION ALL
     SELECT 1 FROM instagram_mentions
     WHERE company_name = (SELECT company_name FROM company) 
-      AND created_at::date = CURRENT_DATE
+      AND created_at::date >= CURRENT_DATE - 30
     UNION ALL
     SELECT 1 FROM facebook_posts
     WHERE company_name = (SELECT company_name FROM company) 
-      AND created_at::date = CURRENT_DATE
+      AND created_at::date >= CURRENT_DATE - 30
     UNION ALL
     SELECT 1 FROM linkedin_posts
     WHERE company_name = (SELECT company_name FROM company) 
-      AND posted_at_iso::date = CURRENT_DATE
+      AND posted_at_iso::date >= CURRENT_DATE - 30
   ) t
 ),
-followers_today AS (
+followers_now AS (
   SELECT COALESCE(SUM(followers), 0) AS followers_now
   FROM (
     ( 
       SELECT DISTINCT ON (twitter_username) followers
       FROM twitter_user_stats
       WHERE company_name = (SELECT company_name FROM company)
-        AND fetched_at::date = CURRENT_DATE
+        AND fetched_at::date <= CURRENT_DATE
       ORDER BY twitter_username, fetched_at DESC
     )
     UNION ALL
@@ -417,19 +417,19 @@ followers_today AS (
       SELECT DISTINCT ON (instagram_username) followers
       FROM instagram_user_stats
       WHERE company_name = (SELECT company_name FROM company)
-        AND fetched_at::date = CURRENT_DATE
+        AND fetched_at::date <= CURRENT_DATE
       ORDER BY instagram_username, fetched_at DESC
     )
   ) f
 ),
-followers_yesterday AS (
+followers_30d_ago AS (
   SELECT COALESCE(SUM(followers), 0) AS followers_prev
   FROM (
     (
       SELECT DISTINCT ON (twitter_username) followers
       FROM twitter_user_stats
       WHERE company_name = (SELECT company_name FROM company)
-        AND fetched_at::date = CURRENT_DATE - 1
+        AND fetched_at::date <= CURRENT_DATE - 30
       ORDER BY twitter_username, fetched_at DESC
     )
     UNION ALL
@@ -437,12 +437,12 @@ followers_yesterday AS (
       SELECT DISTINCT ON (instagram_username) followers
       FROM instagram_user_stats
       WHERE company_name = (SELECT company_name FROM company)
-        AND fetched_at::date = CURRENT_DATE - 1
+        AND fetched_at::date <= CURRENT_DATE - 30
       ORDER BY instagram_username, fetched_at DESC
     )
   ) f
 ),
-engagement_today AS (
+engagement_recent AS (
   SELECT
     COALESCE(SUM(like_count), 0) +
     COALESCE(SUM(reply_count), 0) +
@@ -461,48 +461,49 @@ engagement_today AS (
       0 AS total_reactions
     FROM twitter_mentions
     WHERE company_name = (SELECT company_name FROM company)
-      AND created_at::date = CURRENT_DATE
+      AND created_at::date >= CURRENT_DATE - 30
     UNION ALL
     SELECT 
       like_count, 0, 0, 0, 
       comment_count, 0, 0, 0
     FROM instagram_mentions
     WHERE company_name = (SELECT company_name FROM company)
-      AND created_at::date = CURRENT_DATE
+      AND created_at::date >= CURRENT_DATE - 30
     UNION ALL
     SELECT 
       0, 0, 0, 0,
       comments_count, reactions_count, share_count, 0
     FROM facebook_posts
     WHERE company_name = (SELECT company_name FROM company)
-      AND created_at::date = CURRENT_DATE
+      AND created_at::date >= CURRENT_DATE - 30
     UNION ALL
     SELECT 
       0, 0, 0, 0,
       comments_count, 0, 0, total_reactions
     FROM linkedin_posts
     WHERE company_name = (SELECT company_name FROM company)
-      AND posted_at_iso::date = CURRENT_DATE
+      AND posted_at_iso::date >= CURRENT_DATE - 30
   ) e
 )
 SELECT
-  (SELECT cnt FROM posts_today) AS posts_today,
-  (SELECT followers_now FROM followers_today) -
-  (SELECT followers_prev FROM followers_yesterday) AS new_followers,
+  (SELECT cnt FROM posts_recent) AS recent_posts,
+  (SELECT followers_now FROM followers_now) -
+  (SELECT followers_prev FROM followers_30d_ago) AS recent_followers,
   CASE
-    WHEN (SELECT followers_now FROM followers_today) = 0 THEN 0
+    WHEN (SELECT followers_now FROM followers_now) = 0 THEN 0
     ELSE ROUND(
-      (SELECT interactions FROM engagement_today)::numeric /
-      (SELECT followers_now FROM followers_today)::numeric * 100, 
+      (SELECT interactions FROM engagement_recent)::numeric /
+      (SELECT followers_now FROM followers_now)::numeric * 100, 
       2
     )
-  END AS engagement_rate;
+  END AS recent_engagement_rate;
 `;
+
 
 /**
  * Big stats endpoint for today's posts, new followers, and engagement rate.
  */
-exports.statsToday = async (req, res, next) => {
+exports.stats = async (req, res, next) => {
   try {
     const userId = req.user.id;
     const { rows } = await pool.query(bigStatsSql, [userId]);
