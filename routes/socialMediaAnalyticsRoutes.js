@@ -30,6 +30,6 @@ router.get('/highly-negative', analytics.highlyNegativeMetrics);
 router.get('/mentions', analytics.mentions);
 
 // 8) Stats Metrics
-router.get('/statsToday', analytics.statsToday);
+router.get('/statsToday', analytics.stats);
 
 module.exports = router;
