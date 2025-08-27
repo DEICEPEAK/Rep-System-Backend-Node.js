@@ -44,7 +44,7 @@ app.use('/api/auth',   authRoute);
 app.use('/api/metrics', metricsRoute);
 app.use('/api/review', reviewRoutes);
 app.use('/api/social-media', socialMediaAnalyticsRoute);
-app.use('/api/video-content', videoContentRoutes);
+app.use('/api/video', videoContentRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/keyword', keywordRoutes);
 app.use('/api/translation', translationRoutes);
