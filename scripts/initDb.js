@@ -1,162 +1,181 @@
-// scripts/initDb.js
+// services/geminiClientImpl.js
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const pool = require('../db/pool');
+function makeGeminiClient({ apiKey, defaultModel = 'gemini-1.5-flash' } = {}) {
+  if (!apiKey) throw new Error('GEMINI_API_KEY missing');
 
-;(async () => {
-  try {
-    // 1. Enable UUID support
-    await pool.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`);
+  const genAI = new GoogleGenerativeAI(apiKey);
 
-    // 2. Users table
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id                         UUID      PRIMARY KEY DEFAULT uuid_generate_v4(),
-        first_name                 TEXT      NOT NULL,
-        last_name                  TEXT      NOT NULL,
-        password                   TEXT      NOT NULL,
-        company_name               TEXT      NOT NULL UNIQUE,
-        email                      TEXT      NOT NULL UNIQUE,
-        country                    TEXT      NOT NULL,
-        telephone                  TEXT      NOT NULL,
-        company_web_address        TEXT,
-        twitter_username           TEXT,
-        instagram_username         TEXT,
-        feefo_business_info        TEXT,
-        place_id      TEXT,
-        place_url           TEXT,
-        last_fetched_twitter       TIMESTAMPTZ,
-        last_fetched_twitter2      TIMESTAMPTZ,
-        last_fetched_instagram     TIMESTAMPTZ,
-        last_fetched_trustpilot    TIMESTAMPTZ,
-        last_fetched_feefo         TIMESTAMPTZ,
-        last_fetched_google        TIMESTAMPTZ,
-        created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-    `);
+  return {
+    /**
+     * Translate (already in your file) ...
+     */
+    async translate(text, options) {
+      const t0 = Date.now();
+      const sys = [
+        `You are a professional translator.`,
+        `Translate the user text to ${options.targetLang}.`,
+        `Preserve meaning, tone, brand/product names, URLs and emojis.`,
+        `Return ONLY the translated text — no preface, no quotes.`
+      ].join(' ');
 
-    // 3. Password resets
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS password_resets (
-        user_id    UUID      PRIMARY KEY
-                    REFERENCES users(id) ON DELETE CASCADE,
-        otp        VARCHAR(6) NOT NULL,
-        expires_at TIMESTAMPTZ NOT NULL
-      );
-    `);
+      const model = genAI.getGenerativeModel({
+        model: defaultModel,
+        systemInstruction: sys
+      });
 
-    // 4. Twitter mentions
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS twitter_mentions (
-        tweet_id      TEXT        PRIMARY KEY,
-        company_name  TEXT        NOT NULL,
-        text          TEXT        DEFAULT '',
-        author_handle TEXT        DEFAULT '',
-        created_at    TIMESTAMPTZ NOT NULL,
-        reply_count   INTEGER     NOT NULL DEFAULT 0,
-        retweet_count INTEGER     NOT NULL DEFAULT 0,
-        like_count    INTEGER     NOT NULL DEFAULT 0,
-        sentiment      TEXT       DEFAULT 'neutral',
-        image_url     TEXT,
-        video_url     TEXT,
-        fetched_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-    `);
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_twitter_company_date
-      ON twitter_mentions(company_name, created_at);
-    `);
+      const payload = {
+        contents: [{ role: 'user', parts: [{ text }] }],
+        generationConfig: { temperature: options.temperature ?? 0.1 }
+      };
 
-    // 5. Instagram mentions
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS instagram_mentions (
-        post_id       TEXT        PRIMARY KEY,
-        company_name  TEXT        NOT NULL,
-        caption       TEXT        DEFAULT '',
-        author_handle TEXT        DEFAULT '',
-        created_at    TIMESTAMPTZ NOT NULL,
-        like_count    INTEGER     NOT NULL DEFAULT 0,
-        comment_count INTEGER     NOT NULL DEFAULT 0,
-        sentiment      TEXT       DEFAULT 'neutral',
-        image_url     TEXT,
-        video_url     TEXT,
-        fetched_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-    `);
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_instagram_company_date
-      ON instagram_mentions(company_name, created_at);
-    `);
+      const timeoutMs = options.timeoutMs ?? 10_000;
+      const sdkCall = model.generateContent(payload);
+      let result;
+      try {
+        result = await Promise.race([
+          sdkCall,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(Object.assign(new Error('Gemini request timed out'), { code: 'ETIMEDOUT' })), timeoutMs)
+          )
+        ]);
+      } catch (err) {
+        if (err.code === 'ETIMEDOUT') {
+          return { ok: false, code: 'TIMEOUT', message: 'Gemini request timed out', retryable: true };
+        }
+        const msg = String(err.message || err);
+        const code = /quota|rate/i.test(msg)
+          ? 'RATE_LIMIT'
+          : /invalid.*model|parameter/i.test(msg)
+          ? 'BAD_REQUEST'
+          : 'PROVIDER_ERROR';
+        const retryable = code === 'RATE_LIMIT';
+        return { ok: false, code, message: msg, retryable };
+      }
 
-    // 6. Trustpilot reviews
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS trustpilot_reviews (
-        id                    SERIAL       PRIMARY KEY,
-        company_name          TEXT         NOT NULL,
-        company_web_address   TEXT         NOT NULL,
-        author_name           TEXT,
-        rating                INTEGER      DEFAULT 0,
-        review_title          TEXT,
-        review_body           TEXT,
-        review_date           DATE,
-        fetched_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-        CONSTRAINT uq_tp_reviews UNIQUE
-          (company_name, author_name, review_title, review_date)
-      );
-    `);
+      const response = result?.response;
+      const out =
+        (typeof response?.text === 'function' ? response.text() : '') ||
+        response?.candidates?.[0]?.content?.parts?.[0]?.text ||
+        '';
 
-    // 7. Feefo reviews
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS feefo_reviews (
-        id                       SERIAL       PRIMARY KEY,
-        company_name             TEXT         NOT NULL,
-        feefo_business_info      TEXT         NOT NULL,
-        customer_name              TEXT,
-        rating                   INTEGER,
-        service_review           TEXT,
-        product_review           TEXT,
-        review_date              DATE,
-        customer_location        TEXT,
-        fetched_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-        CONSTRAINT uq_feefo_reviews UNIQUE
-          (company_name, feefo_business_info, customer_name, service_review, review_date)
-      );
-    `);
+      if (!out || !out.trim()) {
+        return { ok: false, code: 'PROVIDER_ERROR', message: 'Empty response', retryable: false };
+      }
 
+      const usage = response?.usageMetadata || response?.usage;
 
+      return {
+        ok: true,
+        translatedText: out.trim(),
+        detectedLang: 'unknown',
+        tokensIn: usage?.promptTokenCount,
+        tokensOut: usage?.candidatesTokenCount ?? usage?.totalTokenCount,
+        latencyMs: Date.now() - t0,
+        model: defaultModel
+      };
+    },
 
-    // 8. Google reviews
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS google_maps_reviews (
-        id                    SERIAL       PRIMARY KEY,
-        company_name          TEXT         NOT NULL,
-        place_url             TEXT         NOT NULL,  
-        place_id              TEXT         NOT NULL,
-        reviewer_name         TEXT,                   
-        rating                INTEGER,                
-        review_text           TEXT,                  
-        review_date           TIMESTAMPTZ,           
-        review_url            TEXT,                   
-        owner_response        TEXT,                   
-        fetched_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CONSTRAINT uq_gmaps_reviews UNIQUE (place_id, reviewer_name, review_date)
-      );
-    `);
+    /**
+     * Refine a company's public-facing description.
+     * options: { companyName, description, website, tone, wordLimit, timeoutMs, temperature, requestId }
+     */
+    async refineBusinessDescription(options) {
+      const {
+        companyName,
+        description,
+        website,
+        tone = 'concise, plain-English, benefit-led, trustworthy, professional',
+        wordLimit = 110,
+        timeoutMs = 10_000,
+        temperature = 0.4
+      } = options || {};
 
+      if (!companyName) return { ok: false, code: 'BAD_REQUEST', message: 'companyName required', retryable: false };
+      if (!description) return { ok: false, code: 'BAD_REQUEST', message: 'description required', retryable: false };
 
+      const t0 = Date.now();
 
+      // Strict system guardrails to avoid hallucinated claims.
+      const sys = [
+        'You are a senior marketing copy editor for a business reputation page.',
+        'Rewrite the description using ONLY the information provided by the user.',
+        'Do NOT invent awards, metrics, years in business, client names, guarantees, or certifications.',
+        'No buzzword salad. Prioritize clarity, real benefits, and trust.',
+        `Tone: ${tone}.`,
+        `Length: one paragraph, max ${wordLimit} words.`,
+        'No hashtags, no emojis, no quotes. Return ONLY the refined paragraph.'
+      ].join(' ');
 
+      const model = genAI.getGenerativeModel({
+        model: defaultModel,
+        systemInstruction: sys
+      });
 
+      // Stuff we let the model see
+      const userText = [
+        `Company name: ${companyName}`,
+        website ? `Website: ${website}` : '',
+        'Original description:',
+        '"""',
+        description,
+        '"""'
+      ].filter(Boolean).join('\n');
 
+      const payload = {
+        contents: [{ role: 'user', parts: [{ text: userText }] }],
+        generationConfig: {
+          temperature,
+          topP: 0.9,
+          maxOutputTokens: 256
+        }
+      };
 
+      const sdkCall = model.generateContent(payload);
+      let result;
+      try {
+        result = await Promise.race([
+          sdkCall,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(Object.assign(new Error('Gemini request timed out'), { code: 'ETIMEDOUT' })), timeoutMs)
+          )
+        ]);
+      } catch (err) {
+        if (err.code === 'ETIMEDOUT') {
+          return { ok: false, code: 'TIMEOUT', message: 'Gemini request timed out', retryable: true };
+        }
+        const msg = String(err.message || err);
+        const code = /quota|rate/i.test(msg)
+          ? 'RATE_LIMIT'
+          : /invalid.*model|parameter/i.test(msg)
+          ? 'BAD_REQUEST'
+          : 'PROVIDER_ERROR';
+        const retryable = code === 'RATE_LIMIT';
+        return { ok: false, code, message: msg, retryable };
+      }
 
+      const response = result?.response;
+      const out =
+        (typeof response?.text === 'function' ? response.text() : '') ||
+        response?.candidates?.[0]?.content?.parts?.[0]?.text ||
+        '';
 
+      if (!out || !out.trim()) {
+        return { ok: false, code: 'PROVIDER_ERROR', message: 'Empty response', retryable: false };
+      }
 
+      const usage = response?.usageMetadata || response?.usage;
 
+      return {
+        ok: true,
+        refinedText: out.trim(),
+        tokensIn: usage?.promptTokenCount,
+        tokensOut: usage?.candidatesTokenCount ?? usage?.totalTokenCount,
+        latencyMs: Date.now() - t0,
+        model: defaultModel
+      };
+    }
+  };
+}
 
-    console.log('✓ Database schema is ready');
-  } catch (err) {
-    console.error('✗ Error initializing database schema', err);
-  } finally {
-    await pool.end();
-  }
-})();
+module.exports = { makeGeminiClient };
