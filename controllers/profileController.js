@@ -2,18 +2,23 @@
 
 const pool = require('../db/pool');
 const bcrypt = require('bcrypt');
+const { makeGeminiClient } = require('../services/geminiClientImpl');
+const geminiClient = makeGeminiClient({ apiKey: process.env.GEMINI_API_KEY });
 
 // Fields we consider “business details”
 const DETAIL_FIELDS = [
   'company_web_address',
   'company_name',
+  'description',
   'email',
   'twitter_username',
   'instagram_username',
   'feefo_business_info',
   'facebook_username',
   'linkedin_username',
-  'place_url'
+  'place_url',
+  'tiktok_profile',
+  'youtube_channel'
 ];
 
 // 1) View Profile
@@ -27,6 +32,7 @@ exports.viewProfile = async (req, res, next) => {
          first_name,
          last_name,
          company_name,
+          description,
          country,
          telephone,
          company_web_address,
@@ -35,7 +41,9 @@ exports.viewProfile = async (req, res, next) => {
          twitter_username,
          facebook_username,
          linkedin_username,
-         place_url
+         place_url,
+         tiktok_profile,
+         youtube_channel
        FROM users
        WHERE id = $1
        LIMIT 1`,
@@ -76,13 +84,16 @@ exports.editBusinessDetails = async (req, res, next) => {
      RETURNING
        company_web_address,
        company_name,
+       description,
        email,
        twitter_username,
        instagram_username,
        feefo_business_info,
        facebook_username,
        linkedin_username,
-       place_url
+       place_url,
+       tiktok_profile,
+       youtube_channel
   `;
   try {
     const { rows } = await pool.query(sql, vals);
@@ -182,6 +193,75 @@ exports.getMyCompany = async (req, res, next) => {
     }
 
     res.json({ company_name: rows[0].company_name });
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+
+
+
+// Returns: { refined_description, meta? }
+exports.aiDescription = async (req, res, next) => {
+  const userId = req.user.id;
+  const { description, word_limit, tone } = req.body || {};
+
+  if (!description || typeof description !== 'string' || !description.trim()) {
+    return res.status(400).json({ error: 'description is required' });
+  }
+
+  // (Optional) guard super long payloads
+  const MAX_CHARS = 4000;
+  const safeDescription = description.length > MAX_CHARS
+    ? description.slice(0, MAX_CHARS)
+    : description;
+
+  try {
+    // fetch company name (you already have similar code)
+    const { rows } = await pool.query(
+      `SELECT company_name, company_web_address
+         FROM users
+        WHERE id = $1
+        LIMIT 1`,
+      [userId]
+    );
+
+    if (!rows.length) return res.status(404).json({ error: 'User not found.' });
+
+    const companyName = rows[0].company_name || 'Your company';
+    const website = rows[0].company_web_address || undefined;
+
+    // Call Gemini refinement
+    const result = await geminiClient.refineBusinessDescription({
+      companyName,
+      description: safeDescription,
+      website,
+      wordLimit: Number.isFinite(word_limit) ? Math.max(40, Math.min(160, Number(word_limit))) : 110,
+      tone: tone || 'concise, plain-English, benefit-led, trustworthy, professional',
+      // you can also pass temperature/timeout if you want to tweak
+    });
+
+    if (!result.ok) {
+      const status = (result.code === 'BAD_REQUEST') ? 400
+                   : (result.code === 'RATE_LIMIT' || result.code === 'TIMEOUT') ? 503
+                   : 502;
+      return res.status(status).json({
+        error: 'AI refinement failed',
+        code: result.code,
+        message: result.message
+      });
+    }
+
+    return res.json({
+      refined_description: result.refinedText,
+      meta: {
+        model: result.model,
+        tokens_in: result.tokensIn,
+        tokens_out: result.tokensOut,
+        latency_ms: result.latencyMs
+      }
+    });
   } catch (err) {
     next(err);
   }
