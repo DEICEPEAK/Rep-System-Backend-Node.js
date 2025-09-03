@@ -9,6 +9,8 @@ router.get(  '/',                   protect, ctrl.viewProfile);
 router.put(  '/edit-business-details',   protect, ctrl.editBusinessDetails);
 router.put(  '/change-password',    protect, ctrl.changePassword);
 router.get(  '/completed-info',     protect, ctrl.completedInfo);
+router.post( '/ai-description',     protect, ctrl.aiDescription);
+
 
 // Get companu name by user
 router.get('/company-name', protect, ctrl.getMyCompany);

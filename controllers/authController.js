@@ -15,114 +15,68 @@ function validatePassword(password) {
 }
 
 
-// Register a new user
-exports.registerUser = async (req, res, next) => {
-  try {
-    const { first_name, last_name, password, confirm_password, company_name, email, country, telephone, company_web_address } = req.body;
+function isEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
 
-    // 1. All fields required (except company_web_address)
-    if (!first_name || !last_name || !password || !confirm_password || !company_name || !email || !country || !telephone) {
-      return res.status(400).json({ error: 'All fields are required.' });
-    }
-
-    // 2. Password match & strength
-    if (password !== confirm_password) {
-      return res.status(400).json({ error: 'Passwords do not match.' });
-    }
-    if (!validatePassword(password)) {
-      return res.status(400).json({
-        error: 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.'
-      });
-    }
-
-    // 3. Check unique email and company_name
-    const { rows: exists } = await pool.query(
-      `SELECT 1 FROM users WHERE email = $1 OR company_name = $2 LIMIT 1`,
-      [email, company_name]
-    );
-    if (exists.length) {
-      return res.status(409).json({ error: 'Email or company name already in use.' });
-    }
-
-    // 4. Hash password
-    const hashed = await bcrypt.hash(password, 10);
-
-    // 5. Insert user
-    await pool.query(
-      `INSERT INTO users (first_name, last_name, password, company_name, email, country, telephone, company_web_address)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [ first_name, last_name, hashed, company_name, email, country, telephone, company_web_address || null ]
-    );
-
-    res.status(201).json({ message: 'User registered successfully.' });
-  } catch (err) {
-    next(err);
-  }
-};
-
-// Login user
+// LOGIN
 exports.loginUser = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required.' });
-    }
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
+    if (!isEmail(email))     return res.status(400).json({ error: 'Invalid email.' });
 
-    const { rows } = await pool.query(`SELECT id, password FROM users WHERE email = $1`, [email]);
-    if (!rows.length) {
-      return res.status(401).json({ error: 'Invalid credentials.' });
-    }
+    const { rows } = await pool.query(
+      `SELECT id, password
+         FROM users
+        WHERE LOWER(email) = LOWER($1)
+          AND is_deleted = FALSE
+          AND is_suspended = FALSE
+        LIMIT 1`,
+      [email]
+    );
+    if (!rows.length) return res.status(401).json({ error: 'Invalid credentials.' });
 
     const user = rows[0];
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-      return res.status(401).json({ error: 'Invalid credentials.' });
-    }
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials.' });
 
-    // 3. Generate JWT
-    const token = jwt.sign(
-      { userId: user.id },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '12h' }
-    );
-
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '12h' });
     res.json({ token });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// Request password reset: send OTP
+// FORGOT PASSWORD
 exports.requestPasswordReset = async (req, res, next) => {
   try {
-    const { email } = req.body;
+    const { email } = req.body || {};
     if (!email) return res.status(400).json({ error: 'Email is required.' });
+    if (!isEmail(email)) return res.status(400).json({ error: 'Invalid email.' });
 
-    const { rows } = await pool.query(`SELECT id FROM users WHERE email = $1`, [email]);
+    const { rows } = await pool.query(
+      `SELECT id
+         FROM users
+        WHERE LOWER(email) = LOWER($1)
+          AND is_deleted = FALSE
+        LIMIT 1`,
+      [email]
+    );
     if (!rows.length) return res.status(404).json({ error: 'No user with that email.' });
 
     const userId = rows[0].id;
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 2 * 60 * 1000); // 2 minutes
 
-    // Upsert OTP
     await pool.query(
       `INSERT INTO password_resets (user_id, otp, expires_at)
-       VALUES ($1, $2, $3)
+       VALUES ($1, $2, NOW() + INTERVAL '2 minutes')
        ON CONFLICT (user_id) DO UPDATE
-         SET otp = EXCLUDED.otp,
-             expires_at = EXCLUDED.expires_at`,
-      [userId, otp, expiresAt]
+         SET otp = EXCLUDED.otp, expires_at = EXCLUDED.expires_at`,
+      [userId, otp]
     );
 
-    // Send email
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: +process.env.SMTP_PORT,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
+      secure: +process.env.SMTP_PORT === 465,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     });
 
     await transporter.sendMail({
@@ -133,52 +87,50 @@ exports.requestPasswordReset = async (req, res, next) => {
     });
 
     res.json({ message: 'OTP sent to email.' });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
 
-// Reset password
+// RESET PASSWORD
 exports.resetPassword = async (req, res, next) => {
   try {
-    const { email, otp, new_password, confirm_password } = req.body;
-    if (!email || !otp || !new_password || !confirm_password) {
+    const { email, otp, new_password, confirm_password } = req.body || {};
+    if (!email || !otp || !new_password || !confirm_password)
       return res.status(400).json({ error: 'All fields are required.' });
-    }
-    if (new_password !== confirm_password) {
+    if (!isEmail(email)) return res.status(400).json({ error: 'Invalid email.' });
+    if (new_password !== confirm_password)
       return res.status(400).json({ error: 'Passwords do not match.' });
-    }
-    if (!validatePassword(new_password)) {
-      return res.status(400).json({
-        error: 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.'
-      });
-    }
+    if (!validatePassword(new_password))
+      return res.status(400).json({ error: 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.' });
 
-    // Verify user & OTP
-    const { rows: userRows } = await pool.query(`SELECT id FROM users WHERE email = $1`, [email]);
+    const { rows: userRows } = await pool.query(
+      `SELECT id
+         FROM users
+        WHERE LOWER(email) = LOWER($1)
+          AND is_deleted = FALSE
+        LIMIT 1`,
+      [email]
+    );
     if (!userRows.length) return res.status(404).json({ error: 'No user with that email.' });
+
     const userId = userRows[0].id;
 
     const { rows } = await pool.query(
       `SELECT otp, expires_at
-       FROM password_resets
-       WHERE user_id = $1
-       ORDER BY expires_at DESC
-       LIMIT 1`,
+         FROM password_resets
+        WHERE user_id = $1
+        ORDER BY expires_at DESC
+        LIMIT 1`,
       [userId]
     );
-    if (!rows.length || rows[0].otp !== otp || new Date(rows[0].expires_at) < new Date()) {
+    if (!rows.length || rows[0].otp !== otp || rows[0].expires_at < new Date()) {
       return res.status(400).json({ error: 'Invalid or expired OTP.' });
     }
 
-    // Update password
     const hashed = await bcrypt.hash(new_password, 10);
     await pool.query(`UPDATE users SET password = $1 WHERE id = $2`, [hashed, userId]);
-    // Cleanup
     await pool.query(`DELETE FROM password_resets WHERE user_id = $1`, [userId]);
 
     res.json({ message: 'Password has been reset.' });
-  } catch (err) {
-    next(err);
-  }
+  } catch (err) { next(err); }
 };
+

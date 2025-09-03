@@ -15,8 +15,19 @@ const profileRoutes = require('./routes/profileRoutes');
 const keywordRoutes = require('./routes/keywordRoutes'); 
 const translationRoutes = require('./routes/translationRoutes'); 
 const { makeGeminiClient } = require('./services/geminiClientImpl');
-
 const geminiClient = makeGeminiClient({ apiKey: process.env.GEMINI_API_KEY });
+
+// admin
+const adminAuthRoute = require('./admin/Routes/adminAuthRoutes');
+const adminDashboardRoutes = require('./admin/Routes/adminDashboardRoutes');
+const {startUnsuspendCron} = require('./admin/middlewares/unsuspendCron');
+const accessRoutes = require('./admin/Routes/accessRoutes');
+
+
+startUnsuspendCron();
+
+
+
 
 
 const app = express();
@@ -48,6 +59,14 @@ app.use('/api/video', videoContentRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/keyword', keywordRoutes);
 app.use('/api/translation', translationRoutes);
+
+// Recheck sentiment with Gemini (if enabled)
+
+// ADMIN
+app.use('/api/admin/dashboard', adminDashboardRoutes);
+app.use('/api/admin/auth', adminAuthRoute);
+app.use('/api/admin/access', accessRoutes);
+
 
 app.set('geminiClient', geminiClient);
 

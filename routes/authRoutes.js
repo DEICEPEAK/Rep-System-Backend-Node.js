@@ -6,18 +6,18 @@ const {
   requestPasswordReset,
   resetPassword,
 } = require('../controllers/authController');
+const { protect, requireRole } = require('../middlewares/authMiddleware');
 
 // POST /api/auth/register
-router.post('/register', registerUser);
+//.post('/register', protect, requireRole('admin', 'global_admin'), registerUser);
 
 // POST /api/auth/login
 router.post('/login', loginUser);
 
 // POST /api/auth/request-reset
-router.post('/request-reset', requestPasswordReset);
+router.post('/forget-password', requestPasswordReset);
 
 // POST /api/auth/reset-password
 router.post('/reset-password', resetPassword);
-
 
 module.exports = router;

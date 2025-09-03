@@ -2,6 +2,7 @@
 
 const pool = require('../db/pool');
 const bcrypt = require('bcrypt');
+const gemini = require('../services/geminiClientImpl');
 const { makeGeminiClient } = require('../services/geminiClientImpl');
 const geminiClient = makeGeminiClient({ apiKey: process.env.GEMINI_API_KEY });
 
