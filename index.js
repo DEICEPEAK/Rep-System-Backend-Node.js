@@ -1,8 +1,9 @@
 // index.js
+require('dotenv').config(); // ✅ load env FIRST
+
 const express = require('express');
 const cors    = require('cors');
 const config  = require('./config');
-require('dotenv').config();
 
 const sentimentMiddleware = require('./middlewares/sentimentMiddleware');
 const { recheckSentimentWithGemini } = require('./middlewares/geminiSentimentRecheck');
@@ -17,29 +18,36 @@ const translationRoutes = require('./routes/translationRoutes');
 const { makeGeminiClient } = require('./services/geminiClientImpl');
 const geminiClient = makeGeminiClient({ apiKey: process.env.GEMINI_API_KEY });
 
-// admin
+// --- safety nets for Node 22 ---
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Rejection:', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
+/// admin
 const adminAuthRoute = require('./admin/Routes/adminAuthRoutes');
 const adminDashboardRoutes = require('./admin/Routes/adminDashboardRoutes');
 const {startUnsuspendCron} = require('./admin/middlewares/unsuspendCron');
 const accessRoutes = require('./admin/Routes/accessRoutes');
 
-
 startUnsuspendCron();
-
-
-
-
 
 const app = express();
 
-// 1) CORS _before_ everything else
+// 1) CORS before everything else
 const allowedOrigins = [
   'https://velvety-sunshine-d944db.netlify.app',
-  'http://localhost:5173'        
+  'http://localhost:5173'
 ];
 
+// If you want to be explicit and future-proof with multiple origins:
 app.use(cors({
-  origin: allowedOrigins,
+  origin(origin, cb) {
+    if (!origin) return cb(null, true); // allow mobile apps / curl
+    return cb(null, allowedOrigins.includes(origin));
+  },
   methods: ['GET','POST','PUT','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization'],
   credentials: true
@@ -49,7 +57,13 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-sentimentMiddleware();
+// 2b) (optional) Pre-warm / run once on boot without crashing
+if (process.env.SENTIMENT_RUN_ON_BOOT === '1') {
+  sentimentMiddleware().catch(e =>
+    console.error('Initial sentiment run failed:', e.message)
+  );
+}
+
 // 3) Your routes
 app.use('/api/auth',   authRoute);
 app.use('/api/metrics', metricsRoute);
@@ -60,20 +74,15 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/keyword', keywordRoutes);
 app.use('/api/translation', translationRoutes);
 
-// Recheck sentiment with Gemini (if enabled)
-
 // ADMIN
 app.use('/api/admin/dashboard', adminDashboardRoutes);
 app.use('/api/admin/auth', adminAuthRoute);
 app.use('/api/admin/access', accessRoutes);
 
-
 app.set('geminiClient', geminiClient);
 
 // 4) Health check
-app.get('/health', (_, res) => 
-  res.send({ status: 'ok', env: config.env })
-);
+app.get('/health', (_, res) => res.send({ status: 'ok', env: config.env }));
 
 // 5) Error handler
 app.use((err, req, res, next) => {
@@ -83,5 +92,5 @@ app.use((err, req, res, next) => {
 
 // 6) Start
 app.listen(config.port, () => {
-  console.log(`🚀 Server running in ${config.env} on port ${config.port}`);
+  console.log(🚀 Server running in ${config.env} on port ${config.port});
 });

@@ -1,9 +1,16 @@
-// sentimentMiddleware.js (key parts only)
+// middlewares/sentimentMiddleware.js
 const axios = require('axios');
 const cron = require('node-cron');
 const pool = require('../db/pool');
 
 const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
+
+// ----- Tunables (via .env) -----
+const HF_TIMEOUT_MS = Number(process.env.HF_TIMEOUT_MS || 60000); // default 60s
+const HF_RETRIES    = Number(process.env.HF_RETRIES || 2);        // retry 2 times on timeout/429/5xx
+const BATCH_LIMIT   = Number(process.env.SENTIMENT_BATCH_LIMIT || 200); // rows per table per run
+const FORCE_SOCIAL_EN = process.env.HF_SOCIAL_FORCE_EN === '1';   // force english social model (escape hatch)
+const PREWARM = process.env.HF_PREWARM === '1';                   // warm models on boot
 
 // --- Models ---
 const MODELS = {
@@ -17,21 +24,21 @@ const MODELS = {
   // Reviews (fallback when stars missing)
   review_en_3c: 'https://api-inference.huggingface.co/models/j-hartmann/sentiment-roberta-large-english-3-classes',
   review_multi_5s: 'https://api-inference.huggingface.co/models/nlptown/bert-base-multilingual-uncased-sentiment'
-  // or: 'https://api-inference.huggingface.co/models/LiYuan/amazon-review-sentiment-analysis'
+  // alternative: 'https://api-inference.huggingface.co/models/LiYuan/amazon-review-sentiment-analysis'
 };
 
 // --- Utilities ---
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 function trimLongText(text, maxChars = 2000) {
-  // keep enough context; 2000 chars ~ well under 512 tokens for most languages,
-  // but we ALSO set tokenizer truncation for safety.
   if (!text) return text;
-  const t = text.replace(/\s+/g, ' ').trim();
+  const t = String(text).replace(/\s+/g, ' ').trim();
   return t.length > maxChars ? t.slice(0, maxChars) : t;
 }
 
 // Optional: chunk + vote for very long bodies (reviews, long posts)
-function chunkText(text, chunkSize = 900) { // chars, heuristic
-  const clean = text.replace(/\s+/g, ' ').trim();
+function chunkText(text, chunkSize = 900) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
   if (clean.length <= chunkSize) return [clean];
   const chunks = [];
   for (let i = 0; i < clean.length; i += chunkSize) {
@@ -40,55 +47,62 @@ function chunkText(text, chunkSize = 900) { // chars, heuristic
   return chunks;
 }
 
-// --- Hugging Face call (with truncation + cold-start handling) ---
+// --- Hugging Face call (with truncation + cold-start handling + retries) ---
 async function hf(text, url, { max_length = 256, top_k = null } = {}) {
   const payload = {
     inputs: trimLongText(text, 2000),
     parameters: {
       truncation: true,
-      max_length,             // tokenizer-level max
+      max_length,
       return_all_scores: true,
-      ...(top_k != null ? { top_k } : {}) // keep default behavior unless we want top-1
+      ...(top_k != null ? { top_k } : {})
     },
-    options: { wait_for_model: true }     // avoid 503 when model is cold
+    options: { wait_for_model: true }
   };
 
-  try {
-    const { data } = await axios.post(url, payload, {
-      headers: { Authorization: `Bearer ${HUGGINGFACE_API_KEY}` },
-      timeout: 20000,
-      // tiny retry for transient 5xx/429 could be added here if you want
-    });
-    return data;
-  } catch (e) {
-    // If the model still complains about length, retry with a stricter cap.
-    const msg = e?.response?.data?.error || e.message || '';
-    if (/expanded size|sequence length|must match the existing size/i.test(msg)) {
-      const { data } = await axios.post(url, {
-        ...payload,
-        inputs: trimLongText(text, 1000),
-        parameters: { ...payload.parameters, max_length: 128 }
-      }, {
-        headers: { Authorization: `Bearer ${HUGGINGFACE_API_KEY}` },
-        timeout: 20000
+  for (let attempt = 1; attempt <= HF_RETRIES + 1; attempt++) {
+    try {
+      const { data } = await axios.post(url, payload, {
+        headers: { Authorization: Bearer ${HUGGINGFACE_API_KEY} },
+        timeout: HF_TIMEOUT_MS
       });
       return data;
+    } catch (e) {
+      const status = e.response?.status;
+      const msg = e?.response?.data?.error || e.message || '';
+      const isLenErr = /expanded size|sequence length|must match the existing size/i.test(msg);
+      const retryable = e.code === 'ECONNABORTED' || status === 429 || (status >= 500 && status < 600);
+
+      // If tokenizer complains once, shrink and retry immediately
+      if (isLenErr) {
+        payload.inputs = trimLongText(text, 1000);
+        payload.parameters.max_length = 128;
+        continue;
+      }
+
+      if (retryable && attempt <= HF_RETRIES) {
+        const backoff = Math.min(15000, 1000 * attempt ** 2); // 1s, 4s, 9s...
+        await sleep(backoff);
+        continue;
+      }
+
+      // Surface a compact error (prevents leaking request/keys)
+      throw new Error(HF request failed (${url.split('/').pop()}): ${msg});
     }
-    // surface a compact error instead of dumping the whole request (prevents key leakage)
-    throw new Error(`HF request failed (${url.split('/').pop()}): ${msg}`);
   }
 }
 
-
+// --- Language detection ---
 async function detectLang(text) {
   try {
     const out = await hf(text, MODELS.lid);
     const top = Array.isArray(out) ? out[0][0] : out[0];
-    return (top && top.label) ? top.label.replace('__label__','') : 'und';
+    return (top && top.label) ? top.label.replace('_label_','') : 'und';
   } catch { return 'und'; }
 }
 
 function pickSocialModel(lang) {
+  if (FORCE_SOCIAL_EN) return MODELS.social_en;
   return lang === 'en' ? MODELS.social_en : MODELS.social_multi;
 }
 function pickReviewModel(lang) {
@@ -98,9 +112,9 @@ function pickReviewModel(lang) {
 // Map various label formats to tri-class
 function toTri(label) {
   const L = String(label).toUpperCase();
-  if (['LABEL_0','0','NEGATIVE'].includes(L)) return -1;
-  if (['LABEL_1','1','NEUTRAL'].includes(L))  return 0;
-  if (['LABEL_2','2','POSITIVE'].includes(L)) return +1;
+  if (['LABEL_0','0','NEGATIVE','NEG'].includes(L)) return -1;
+  if (['LABEL_1','1','NEUTRAL','NEU'].includes(L)) return 0;
+  if (['LABEL_2','2','POSITIVE','POS'].includes(L)) return +1;
   return 0;
 }
 
@@ -149,6 +163,8 @@ const SOURCES = [
   { table: 'reddit_posts',       pk: 'id',       texts: ['title','full_review'], type: 'social' },
   { table: 'facebook_posts',     pk: 'post_id',  texts: ['message'], type: 'social' },
   { table: 'linkedin_posts',     pk: 'id',       texts: ['text'],    type: 'social' },
+  { table: 'youtube_data',       pk: 'video_id', texts: ['caption'], type: 'social' },
+  { table: 'tiktok_posts',       pk: 'post_id',  texts: ['title','description'], type: 'social' },
 
   // reviews (fallback only for rows where you don't already have a star)
   { table: 'trustpilot_reviews', pk: 'id', texts: ['review_title','review_body'], type: 'review' },
@@ -159,22 +175,45 @@ const SOURCES = [
 async function processSentimentForPosts() {
   for (const src of SOURCES) {
     const { table, pk, texts, type } = src;
-    const cols = [pk, ...texts].map(c => `"${c}"`).join(', ');
-    const rows = (await pool.query(`SELECT ${cols} FROM ${table} WHERE rating IS NULL`)).rows;
+    const cols = [pk, ...texts].map(c => "${c}").join(', ');
+
+    let rows = [];
+    try {
+      const res = await pool.query(
+        SELECT ${cols} FROM ${table} WHERE rating IS NULL LIMIT $1,
+        [BATCH_LIMIT]
+      );
+      rows = res.rows || [];
+    } catch (err) {
+      console.error(Query failed for ${table}: ${err.message});
+      continue; // move to next table
+    }
 
     for (const row of rows) {
-      const parts = texts.map(f => row[f]).filter(s => typeof s === 'string' && s.trim());
+      const parts = texts
+        .map(f => row[f])
+        .filter(s => typeof s === 'string' && s.trim());
+
       if (!parts.length) continue;
 
       const text = parts.join(' ');
-      const lang = await detectLang(text); // 'en', 'es', etc.
 
-      const { stars } = type === 'social'
-        ? await classifySocial(text, lang)
-        : await classifyReview(text, lang);
+      try {
+        const lang = await detectLang(text); // 'en', 'es', etc.
 
-      await pool.query(`UPDATE ${table} SET rating = $1 WHERE ${pk} = $2`, [stars, row[pk]]);
-      console.log(`Updated ${table} ${row[pk]} → rating ${stars} (lang=${lang}, type=${type})`);
+        const { stars } = type === 'social'
+          ? await classifySocial(text, lang)
+          : await classifyReview(text, lang);
+
+        await pool.query(
+          UPDATE ${table} SET rating = $1 WHERE ${pk} = $2,
+          [stars, row[pk]]
+        );
+
+        console.log(Updated ${table} ${row[pk]} → rating ${stars} (lang=${lang}, type=${type}));
+      } catch (err) {
+        console.error(Skipping ${table} ${row[pk]}: ${err.message});
+      }
     }
   }
 }
@@ -182,7 +221,18 @@ async function processSentimentForPosts() {
 // run every 5 minutes
 cron.schedule('*/5 * * * *', () => {
   console.log('Running sentiment classification...');
-  processSentimentForPosts().catch(console.error);
+  processSentimentForPosts().catch(e => console.error('Batch failed:', e.message));
 });
 
 module.exports = processSentimentForPosts;
+
+// Optional: warm common models to reduce first-call latency
+if (PREWARM) {
+  setImmediate(() => {
+    Promise.allSettled([
+      hf('hello', MODELS.lid).catch(() => {}),
+      hf('I love this', MODELS.social_en).catch(() => {}),
+      hf("C'est superbe", MODELS.social_multi).catch(() => {}),
+    ]).then(() => console.log('HF models prewarmed'));
+  });
+}

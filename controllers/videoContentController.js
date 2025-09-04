@@ -101,7 +101,7 @@ exports.videoContents = async (req, res, next) => {
         tt.author_handle                  AS author,
         tt.rating                         AS rating,
         tt.created_at                     AS post_date,
-        tt.videourl                       AS video_url,
+        tt.post_url                       AS video_url,
         'tiktok'                          AS source
       FROM tiktok_posts tt
       WHERE tt.company_name = $1
