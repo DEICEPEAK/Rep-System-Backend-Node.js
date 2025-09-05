@@ -5,7 +5,7 @@ const express = require('express');
 const cors    = require('cors');
 const config  = require('./config');
 
-const sentimentMiddleware = require('./middlewares/sentimentMiddleware');
+//const sentimentMiddleware = require('./middlewares/sentimentMiddleware');
 const { recheckSentimentWithGemini } = require('./middlewares/geminiSentimentRecheck');
 const metricsRoute = require('./routes/metricsRoutes');
 const authRoute    = require('./routes/authRoutes');
@@ -57,12 +57,7 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 2b) (optional) Pre-warm / run once on boot without crashing
-if (process.env.SENTIMENT_RUN_ON_BOOT === '1') {
-  sentimentMiddleware().catch(e =>
-    console.error('Initial sentiment run failed:', e.message)
-  );
-}
+
 
 // 3) Your routes
 app.use('/api/auth',   authRoute);
@@ -92,5 +87,5 @@ app.use((err, req, res, next) => {
 
 // 6) Start
 app.listen(config.port, () => {
-  console.log(🚀 Server running in ${config.env} on port ${config.port});
+  console.log(`🚀 Server running in ${config.env} on port ${config.port}`);
 });
