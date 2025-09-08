@@ -117,6 +117,7 @@ exports.getUsersOverview = async (req, res, next) => {
         company_web_address,
         created_at
       FROM users
+      WHERE is_deleted = FALSE
       ORDER BY created_at DESC
       LIMIT $1 OFFSET $2
     `;
