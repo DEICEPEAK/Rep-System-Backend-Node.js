@@ -2,7 +2,6 @@
 
 const pool = require('../db/pool');
 const bcrypt = require('bcrypt');
-const gemini = require('../services/geminiClientImpl');
 const { makeGeminiClient } = require('../services/geminiClientImpl');
 const geminiClient = makeGeminiClient({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -204,6 +203,8 @@ exports.getMyCompany = async (req, res, next) => {
 
 
 // Returns: { refined_description, meta? }
+
+
 exports.aiDescription = async (req, res, next) => {
   const userId = req.user.id;
   const { description, word_limit, tone } = req.body || {};
@@ -212,14 +213,13 @@ exports.aiDescription = async (req, res, next) => {
     return res.status(400).json({ error: 'description is required' });
   }
 
-  // (Optional) guard super long payloads
   const MAX_CHARS = 4000;
   const safeDescription = description.length > MAX_CHARS
     ? description.slice(0, MAX_CHARS)
     : description;
 
   try {
-    // fetch company name (you already have similar code)
+    // Fetch company details
     const { rows } = await pool.query(
       `SELECT company_name, company_web_address
          FROM users
@@ -231,16 +231,15 @@ exports.aiDescription = async (req, res, next) => {
     if (!rows.length) return res.status(404).json({ error: 'User not found.' });
 
     const companyName = rows[0].company_name || 'Your company';
-    const website = rows[0].company_web_address || undefined;
+    const website = rows[0].company_web_address;
 
     // Call Gemini refinement
     const result = await geminiClient.refineBusinessDescription({
       companyName,
       description: safeDescription,
       website,
-      wordLimit: Number.isFinite(word_limit) ? Math.max(40, Math.min(160, Number(word_limit))) : 110,
-      tone: tone || 'concise, plain-English, benefit-led, trustworthy, professional',
-      // you can also pass temperature/timeout if you want to tweak
+      wordLimit: Number.isFinite(word_limit) ? Math.max(40, Math.min(160, Number(word_limit))) : 120,
+      tone: tone || 'warm, credible, professional',
     });
 
     if (!result.ok) {

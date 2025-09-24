@@ -94,13 +94,13 @@ async function countReviews(company, start, end, cond) {
        AND review_date BETWEEN $2 AND $3
        AND ${cond.sql}
   `;
-  const rdSql = `
+  /*const rdSql = `
     SELECT COUNT(*)::int AS c
       FROM reddit_posts
      WHERE company_name = $1
        AND review_date BETWEEN $2 AND $3
        AND ${cond.sql}
-  `;
+  `;*/
  
   const params = [company, start, end, ...cond.params];
   // console.log(
@@ -115,7 +115,7 @@ async function countReviews(company, start, end, cond) {
     pool.query(tpSql, params),
     pool.query(ffSql, params),
     pool.query(gmSql, params),
-    pool.query(rdSql, params),
+    //pool.query(rdSql, params),
   ]);
 
   // console.log(
@@ -215,7 +215,7 @@ exports.reviews = async (req, res, next) => {
     `;
 
     // Reddit posts
-    const rdQ = `
+    /*const rdQ = `
       SELECT
         rating,
         title    AS title,
@@ -225,7 +225,7 @@ exports.reviews = async (req, res, next) => {
       FROM reddit_posts
      WHERE company_name = $1
        ${dateClause}
-    `;
+    `;*/
 
 
 
@@ -235,7 +235,7 @@ exports.reviews = async (req, res, next) => {
       pool.query(tpQ, params),
       pool.query(ffQ, params),
       pool.query(gmQ, params),
-      pool.query(rdQ, params),
+      //pool.query(rdQ, params),
     ]);
 
     // console.log(
@@ -251,7 +251,7 @@ exports.reviews = async (req, res, next) => {
       ...tag(tpRes.rows, 'Trustpilot'),
       ...tag(ffRes.rows, 'Feefo'),
       ...tag(gmRes.rows, 'Google Maps'),
-      ...tag(rdRes.rows, 'Reddit'),
+     // ...tag(rdRes.rows, 'Reddit'),
     ];
     // console.log('[reviews] combined rows before sort:', all.length);
 
@@ -294,76 +294,88 @@ exports.reviews = async (req, res, next) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────────
+// 30-day review stats: total count + average rating
+// ─────────────────────────────────────────────────────────────
 
-const reviewStatsSql = `
+// Last 30 days stats + % change vs previous 30 days
+const reviewStats30dChangeSql = `
 WITH company AS (
   SELECT company_name
   FROM users
   WHERE id = $1
   LIMIT 1
 ),
-reviews_today AS (
-  /* Google Maps – includes possible owner response */
-  SELECT
-    rating,
-    (owner_response IS NOT NULL) AS responded
-  FROM google_maps_reviews
-  WHERE company_name = (SELECT company_name FROM company)
-    AND review_date = CURRENT_DATE
-
-  UNION ALL
-  /* Trustpilot – placeholder responded = FALSE until you store replies */
-  SELECT
-    rating,
-    FALSE AS responded
+last_30 AS (
+  SELECT rating::numeric AS rating
   FROM trustpilot_reviews
   WHERE company_name = (SELECT company_name FROM company)
-    AND review_date = CURRENT_DATE
-
+    AND review_date::date BETWEEN CURRENT_DATE - INTERVAL '30 days' AND CURRENT_DATE
   UNION ALL
-  /* Feefo */
-  SELECT
-    rating,
-    FALSE AS responded
+  SELECT rating::numeric
   FROM feefo_reviews
   WHERE company_name = (SELECT company_name FROM company)
-    AND review_date = CURRENT_DATE
-
+    AND review_date::date BETWEEN CURRENT_DATE - INTERVAL '30 days' AND CURRENT_DATE
   UNION ALL
-  /* Reddit posts (rated by your model) */
-  SELECT
-    rating,
-    FALSE AS responded
-  FROM reddit_posts
+  SELECT rating::numeric
+  FROM google_maps_reviews
   WHERE company_name = (SELECT company_name FROM company)
-    AND review_date = CURRENT_DATE
+    AND review_date::date BETWEEN CURRENT_DATE - INTERVAL '30 days' AND CURRENT_DATE
+),
+prev_30 AS (
+  SELECT 1
+  FROM trustpilot_reviews
+  WHERE company_name = (SELECT company_name FROM company)
+    AND review_date::date BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
+  UNION ALL
+  SELECT 1
+  FROM feefo_reviews
+  WHERE company_name = (SELECT company_name FROM company)
+    AND review_date::date BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
+  UNION ALL
+  SELECT 1
+  FROM google_maps_reviews
+  WHERE company_name = (SELECT company_name FROM company)
+    AND review_date::date BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '31 days'
+),
+curr AS (
+  SELECT COUNT(*)::int AS cnt,
+         COALESCE(ROUND(AVG(rating)::numeric, 2), 0)::numeric AS avg_rating
+  FROM last_30
+),
+prev AS (
+  SELECT COUNT(*)::int AS cnt
+  FROM prev_30
 )
 SELECT
-  COUNT(*)                           AS new_reviews,
-  COALESCE(ROUND(AVG(rating), 2), 0) AS average_rating,
+  curr.cnt AS total_new_reviews_30d,
+  curr.avg_rating AS average_rating_30d,
   CASE
-    WHEN COUNT(*) = 0
-      THEN 0
-    ELSE ROUND(
-      SUM(CASE WHEN responded THEN 1 ELSE 0 END)::numeric
-      / COUNT(*)::numeric * 100, 2
-    )
-  END                                AS response_rate
-FROM reviews_today;
+    WHEN prev.cnt = 0 THEN CASE WHEN curr.cnt = 0 THEN 0 ELSE 100 END
+    ELSE ROUND(((curr.cnt - prev.cnt)::numeric / prev.cnt::numeric) * 100, 2)
+  END AS total_new_reviews_change_pct
+FROM curr CROSS JOIN prev;
 `;
 
-
 /**
- *  Review KPIs for “today” (new reviews, avg rating, response rate)
- *  Route:  GET /reviews/stats/today
+ * GET /reviews/stats/today
+ * Returns:
+ * {
+ *   total_new_reviews_30d: number,
+ *   total_new_reviews_change_pct: number,  // vs previous 30-day window
+ *   average_rating_30d: number
+ * }
  */
 exports.reviewStatsToday = async (req, res, next) => {
   try {
-    const userId  = req.user.id;
-    const { rows } = await pool.query(reviewStatsSql, [userId]);
-
-    // rows[0] = { new_reviews, average_rating, response_rate }
-    res.json(rows[0]);
+    const userId = req.user.id;
+    const { rows } = await pool.query(reviewStats30dChangeSql, [userId]);
+    const r = rows[0] || {
+      total_new_reviews_30d: 0,
+      total_new_reviews_change_pct: 0,
+      average_rating_30d: 0
+    };
+    res.json(r);
   } catch (err) {
     next(err);
   }

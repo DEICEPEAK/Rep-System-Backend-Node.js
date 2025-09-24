@@ -145,3 +145,78 @@ exports.videoContents = async (req, res, next) => {
     next(err);
   }
 };
+
+
+// ---- 30-day video stats (TikTok + YouTube) ----
+const videoStats30dSql = `
+WITH company AS (
+  SELECT company_name
+  FROM users
+  WHERE id = $1
+  LIMIT 1
+),
+tiktok AS (
+  SELECT
+    COALESCE(SUM(play_count), 0)      AS plays,
+    COALESCE(SUM(like_count), 0)      AS likes,
+    COALESCE(SUM(comment_count), 0)   AS comments,
+    COALESCE(SUM(share_count), 0)     AS shares,
+    COALESCE(SUM(collect_count), 0)   AS collects,
+    COALESCE(SUM(rating::numeric), 0) AS sum_rating,
+    COUNT(rating)                      AS cnt_rating
+  FROM tiktok_posts
+  WHERE company_name = (SELECT company_name FROM company)
+    AND created_at::date BETWEEN CURRENT_DATE - INTERVAL '30 days' AND CURRENT_DATE
+),
+youtube AS (
+  SELECT
+    COALESCE(SUM(view_count), 0)      AS views,
+    COALESCE(SUM(like_count), 0)      AS likes,
+    COALESCE(SUM(comments_count), 0)  AS comments,
+    COALESCE(SUM(rating::numeric), 0) AS sum_rating,
+    COUNT(rating)                      AS cnt_rating
+  FROM youtube_data
+  WHERE company_name = (SELECT company_name FROM company)
+    AND published_at::date BETWEEN CURRENT_DATE - INTERVAL '30 days' AND CURRENT_DATE
+)
+SELECT
+  (t.plays + y.views) AS total_views_30d,
+  CASE
+    WHEN (t.plays + y.views) = 0 THEN 0
+    ELSE ROUND(
+      ((t.likes + t.comments + t.shares + t.collects + y.likes + y.comments)::numeric
+       / NULLIF((t.plays + y.views), 0)) * 100, 2
+    )
+  END AS engagement_rate_30d,
+  CASE
+    WHEN (t.cnt_rating + y.cnt_rating) = 0 THEN 0
+    ELSE ROUND(
+      (t.sum_rating + y.sum_rating)::numeric / (t.cnt_rating + y.cnt_rating), 2
+    )
+  END AS average_rating_30d
+FROM tiktok t, youtube y;
+`;
+
+/**
+ * GET /video/stats/30d
+ * Response:
+ * {
+ *   total_views_30d: number,
+ *   engagement_rate_30d: number,  // %
+ *   average_rating_30d: number
+ * }
+ */
+exports.videoStats= async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { rows } = await pool.query(videoStats30dSql, [userId]);
+    const r = rows[0] || {
+      total_views_30d: 0,
+      engagement_rate_30d: 0,
+      average_rating_30d: 0
+    };
+    res.json(r);
+  } catch (err) {
+    next(err);
+  }
+};
