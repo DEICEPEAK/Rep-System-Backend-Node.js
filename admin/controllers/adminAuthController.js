@@ -1,16 +1,8 @@
-/**
- * File: /admin/controllers/adminAuthController.js
- * Purpose: Admin-only auth
- *  - loginAdmin (existing)
- *  - requestAdminPasswordReset  (NEW)
- *  - resetAdminPassword         (NEW)
- *  - addNewAdmin                (NEW, global_admin only)
- */
+// /admin/controllers/adminAuthController.js
 
-const pool = require('../../db/pool'); // adjust if your folder layout differs
+const pool = require('../../db/pool');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const ADMIN_ROLES = new Set(['admin', 'global_admin']);
@@ -22,58 +14,50 @@ function getJwtExpiry() {
   return process.env.ADMIN_JWT_EXPIRES_IN || process.env.JWT_EXPIRES_IN || '12h';
 }
 function isEmail(v) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-}
-// password strength (same policy you already use elsewhere)
-function validatePassword(password) {
-  const re = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]).{8,}$/;
-  return re.test(password);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v || '');
 }
 
 /**
  * POST /admin/login
- * Body: { admin_id?: string, email?: string, password: string }
- * Either admin_id or email is required (plus password)
+ * Body: { identifier: string, password: string }
+ * - identifier can be email OR admin_id
  */
 exports.loginAdmin = async (req, res, next) => {
   try {
-    const { admin_id, email, password } = req.body || {};
+    const { identifier, password } = req.body || {};
+    const id = (identifier || '').trim();
 
+    if (!id) {
+      return res.status(400).json({ error: 'Identifier (email or admin_id) is required.' });
+    }
     if (!password) {
       return res.status(400).json({ error: 'Password is required.' });
     }
-    if (!admin_id && !email) {
-      return res.status(400).json({ error: 'Provide admin_id or email.' });
-    }
-    if (email && !isEmail(email)) {
-      return res.status(400).json({ error: 'Invalid email.' });
+
+    // Build a two-step lookup. If it looks like an email, try email first; otherwise try admin_id first.
+    // Always fall back to the other column to avoid false negatives.
+    const looksEmail = isEmail(id);
+    const lookups = looksEmail
+      ? [
+          { sql: `SELECT admin_id, email, password, role FROM admins WHERE LOWER(email) = LOWER($1) LIMIT 1`, params: [id] },
+          { sql: `SELECT admin_id, email, password, role FROM admins WHERE admin_id = $1 LIMIT 1`, params: [id] },
+        ]
+      : [
+          { sql: `SELECT admin_id, email, password, role FROM admins WHERE admin_id = $1 LIMIT 1`, params: [id] },
+          { sql: `SELECT admin_id, email, password, role FROM admins WHERE LOWER(email) = LOWER($1) LIMIT 1`, params: [id] },
+        ];
+
+    let admin = null;
+    for (const q of lookups) {
+      const { rows } = await pool.query(q.sql, q.params);
+      if (rows.length) { admin = rows[0]; break; }
     }
 
-    let query, params;
-    if (admin_id) {
-      query = `
-        SELECT admin_id, email, password, role
-        FROM admins
-        WHERE admin_id = $1
-        LIMIT 1
-      `;
-      params = [admin_id];
-    } else {
-      query = `
-        SELECT admin_id, email, password, role
-        FROM admins
-        WHERE LOWER(email) = LOWER($1)
-        LIMIT 1
-      `;
-      params = [email];
-    }
-
-    const { rows } = await pool.query(query, params);
-    if (!rows.length) {
+    // Generic message for both unknown user and bad password to avoid info leaks
+    if (!admin) {
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
 
-    const admin = rows[0];
     if (!ADMIN_ROLES.has(admin.role)) {
       return res.status(403).json({ error: 'Account is not permitted to access admin portal.' });
     }
@@ -94,6 +78,7 @@ exports.loginAdmin = async (req, res, next) => {
     next(err);
   }
 };
+
 
 /**
  * POST /admin/password/forgot

@@ -1,14 +1,16 @@
-FROM node:18-alpine
+# Dockerfile
+FROM node:20-alpine
 
-# 1. Set the working dir in the container
+ENV NODE_ENV=production
 WORKDIR /usr/src/app
 
-# 2. Copy package.json & install deps
+# Install only prod deps
 COPY package*.json ./
-RUN npm install
+RUN npm ci --omit=dev
 
-# 3. Copy everything else (your index.js, routes/, controllers/, etc)
+# Copy app
 COPY . .
 
-# 4. Run your app (make sure package.json has "start": "node index.js")
+# (Optional) tiny healthcheck tool is available via busybox wget
+EXPOSE 8080
 CMD ["npm", "start"]

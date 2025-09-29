@@ -1,6 +1,14 @@
-// middlewares/auth.js (your existing protect)
+// middlewares/auth.js
+
+
 const jwt = require('jsonwebtoken');
 const pool = require('../db/pool');
+const { isSessionActive } = require('../services/impersonationService');
+
+function getJwtSecret() {
+  return process.env.JWT_SECRET;
+}
+
 
 exports.protect = async (req, res, next) => {
   let token = null;
@@ -10,15 +18,33 @@ exports.protect = async (req, res, next) => {
   if (!token) return res.status(401).json({ error: 'Not authorized, no token' });
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // Make sure user still exists & not deleted/suspended
+    const decoded = jwt.verify(token, getJwtSecret());
+
+    // Standard user claim
+    const userId = decoded.userId;
+    if (!userId) return res.status(401).json({ error: 'Invalid token' });
+
+    // Ensure the user still exists and is active
     const { rows } = await pool.query(
-      `SELECT id FROM users WHERE id = $1 AND is_deleted = FALSE AND is_suspended = FALSE`,
-      [decoded.userId]
+      `SELECT id FROM users WHERE id=$1 AND is_deleted=FALSE AND is_suspended=FALSE`,
+      [userId]
     );
     if (!rows.length) return res.status(401).json({ error: 'Not authorized' });
 
-    req.user = { id: decoded.userId };
+    req.user = { id: userId };
+
+    // If impersonation claims present -> validate the live session
+    if (decoded.imp?.sessionId && decoded.imp?.adminId) {
+      const active = await isSessionActive(decoded.imp.sessionId, decoded.imp.adminId, userId);
+      if (!active) return res.status(401).json({ error: 'Impersonation is no longer active' });
+
+      req.impersonation = {
+        sessionId: decoded.imp.sessionId,
+        adminId: decoded.imp.adminId,
+        scope: decoded.imp.scope || ['read']
+      };
+    }
+
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Not authorized, token failed' });

@@ -3,9 +3,11 @@
 const pool = require('../db/pool');
 const bcrypt = require('bcrypt');
 const { makeGeminiClient } = require('../services/geminiClientImpl');
+
+// Initialize Gemini client
 const geminiClient = makeGeminiClient({ apiKey: process.env.GEMINI_API_KEY });
 
-// Fields we consider “business details”
+
 const DETAIL_FIELDS = [
   'company_web_address',
   'company_name',
@@ -57,52 +59,91 @@ exports.viewProfile = async (req, res, next) => {
 };
 
 // 2) Edit Business Details
-// PUT /api/profile/business-details
+
+function isEmail(v) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v || '');
+}
+
 exports.editBusinessDetails = async (req, res, next) => {
   const userId = req.user.id;
-  const sets = [];
-  const vals = [];
-  let idx = 1;
 
-  DETAIL_FIELDS.forEach(field => {
-    if (req.body[field] !== undefined) {
-      sets.push(`${field} = $${idx}`);
-      vals.push(req.body[field]);
-      idx++;
-    }
-  });
-
-  if (!sets.length) {
-    return res.status(400).json({ error: 'No business detail fields provided.' });
-  }
-
-  vals.push(userId);
-  const sql = `
-    UPDATE users
-       SET ${sets.join(', ')}
-     WHERE id = $${idx}
-     RETURNING
-       company_web_address,
-       company_name,
-       description,
-       email,
-       twitter_username,
-       instagram_username,
-       feefo_business_info,
-       facebook_username,
-       linkedin_username,
-       place_url,
-       tiktok_profile,
-       youtube_channel
-  `;
   try {
+    if (Object.prototype.hasOwnProperty.call(req.body, 'company_name')) {
+      return res.status(400).json({ error: 'company_name cannot be changed.' });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'email')) {
+      const email = (req.body.email || '').trim();
+      if (!email) return res.status(400).json({ error: 'Email cannot be empty.' });
+      if (!isEmail(email)) return res.status(400).json({ error: 'Invalid email.' });
+
+      const { rows: dup } = await pool.query(
+        `SELECT 1
+           FROM users
+          WHERE is_deleted = FALSE
+            AND LOWER(email) = LOWER($1)
+            AND id <> $2
+          LIMIT 1`,
+        [email, userId]
+      );
+      if (dup.length) {
+        return res.status(409).json({ error: 'Email already in use.' });
+      }
+    }
+
+    const sets = [];
+    const vals = [];
+    let idx = 1;
+
+    DETAIL_FIELDS.forEach(field => {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        sets.push(`${field} = $${idx}`);
+        vals.push(req.body[field]);
+        idx++;
+      }
+    });
+
+    if (!sets.length) {
+      return res.status(400).json({ error: 'No business detail fields provided.' });
+    }
+
+    // Only update if the user exists AND is not deleted/suspended
+    vals.push(userId);
+    const sql = `
+      UPDATE users
+         SET ${sets.join(', ')}
+       WHERE id = $${idx}
+         AND is_deleted = FALSE
+         AND is_suspended = FALSE
+       RETURNING
+         company_web_address,
+         company_name,
+         description,
+         email,
+         twitter_username,
+         instagram_username,
+         feefo_business_info,
+         facebook_username,
+         linkedin_username,
+         place_url,
+         tiktok_profile,
+         youtube_channel
+    `;
+
     const { rows } = await pool.query(sql, vals);
-    if (!rows.length) return res.status(404).json({ error: 'User not found.' });
-    res.json({ businessDetails: rows[0] });
+    if (!rows.length) {
+      return res.status(404).json({ error: 'User not found or unavailable.' });
+    }
+
+    return res.json({ businessDetails: rows[0] });
   } catch (err) {
     next(err);
   }
 };
+
+
+
+
 
 // Password strength helper (reuse from authController)
 function validatePassword(password) {
@@ -200,10 +241,7 @@ exports.getMyCompany = async (req, res, next) => {
 
 
 
-
-
 // Returns: { refined_description, meta? }
-
 
 exports.aiDescription = async (req, res, next) => {
   const userId = req.user.id;

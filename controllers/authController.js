@@ -2,22 +2,26 @@
 File: controllers/authController.js
 Description: Implements register, login, and password-reset logic
 */
+
+// controllers/authController.js
 const pool = require('../db/pool');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
+const { createUserToken, getValidTokenRow, consumeToken, invalidateActiveTokensForUser } = require('../services/tokenService');
+const { enqueueEmail } = require('../services/emailQueue');
 require('dotenv').config();
+
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://app.example.com';
 
 // Helper: validate password strength
 function validatePassword(password) {
   const re = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]).{8,}$/;
   return re.test(password);
 }
-
-
 function isEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
 
-// LOGIN
+
+
 exports.loginUser = async (req, res, next) => {
   try {
     const { email, password } = req.body || {};
@@ -25,112 +29,118 @@ exports.loginUser = async (req, res, next) => {
     if (!isEmail(email))     return res.status(400).json({ error: 'Invalid email.' });
 
     const { rows } = await pool.query(
-      `SELECT id, password
+      `SELECT id, password, email_verified, is_deleted, is_suspended
          FROM users
         WHERE LOWER(email) = LOWER($1)
-          AND is_deleted = FALSE
-          AND is_suspended = FALSE
         LIMIT 1`,
       [email]
     );
     if (!rows.length) return res.status(401).json({ error: 'Invalid credentials.' });
 
     const user = rows[0];
+    if (user.is_deleted || user.is_suspended) {
+      return res.status(403).json({ error: 'Account unavailable.' });
+    }
+    if (!user.email_verified) {
+      
+      return res.status(403).json({ error: 'Please verify your email before logging in.' });
+    }
+
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.status(401).json({ error: 'Invalid credentials.' });
+
+    await pool.query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
 
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '12h' });
     res.json({ token });
   } catch (err) { next(err); }
 };
 
-// FORGOT PASSWORD
-exports.requestPasswordReset = async (req, res, next) => {
+// VERIFY EMAIL (POST /api/auth/verify-email { token })
+exports.verifyEmail = async (req, res, next) => {
   try {
-    const { email } = req.body || {};
-    if (!email) return res.status(400).json({ error: 'Email is required.' });
-    if (!isEmail(email)) return res.status(400).json({ error: 'Invalid email.' });
+    const { token } = req.body || {};
+    if (!token) return res.status(400).json({ error: 'Token is required.' });
 
+    const tok = await getValidTokenRow({ token, type: 'email_verify' });
+
+    // Flip verified (idempotent)
     const { rows } = await pool.query(
-      `SELECT id
-         FROM users
-        WHERE LOWER(email) = LOWER($1)
-          AND is_deleted = FALSE
-        LIMIT 1`,
-      [email]
-    );
-    if (!rows.length) return res.status(404).json({ error: 'No user with that email.' });
-
-    const userId = rows[0].id;
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-    await pool.query(
-      `INSERT INTO password_resets (user_id, otp, expires_at)
-       VALUES ($1, $2, NOW() + INTERVAL '2 minutes')
-       ON CONFLICT (user_id) DO UPDATE
-         SET otp = EXCLUDED.otp, expires_at = EXCLUDED.expires_at`,
-      [userId, otp]
+      `UPDATE users
+          SET email_verified = TRUE,
+              verified_at    = COALESCE(verified_at, NOW())
+        WHERE id = $1
+        RETURNING email_verified, email, company_name, verified_at`,
+      [tok.user_id]
     );
 
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: +process.env.SMTP_PORT,
-      secure: +process.env.SMTP_PORT === 465,
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    });
+    // Consume token (single-use)
+    await consumeToken(tok.id);
 
-    await transporter.sendMail({
-      from: process.env.SMTP_USER,
-      to: email,
-      subject: 'Your password reset code',
-      text: `Your OTP is ${otp}. It expires in 2 minutes.`,
-    });
+    // On first verification, send onboarding
+    if (rows.length && rows[0].verified_at) {
+      await enqueueEmail('onboarding', { to: rows[0].email, companyName: rows[0].company_name });
+    }
 
-    res.json({ message: 'OTP sent to email.' });
-  } catch (err) { next(err); }
+    return res.json({ message: 'Email verified.' });
+  } catch (err) {
+    // If token was used/expired, try to be idempotent-friendly:
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    next(err);
+  }
 };
 
-// RESET PASSWORD
-exports.resetPassword = async (req, res, next) => {
+// SETUP PASSWORD (first-time) OR RESET PASSWORD (same token type: password_reset)
+exports.setupPassword = async (req, res, next) => {
   try {
-    const { email, otp, new_password, confirm_password } = req.body || {};
-    if (!email || !otp || !new_password || !confirm_password)
-      return res.status(400).json({ error: 'All fields are required.' });
-    if (!isEmail(email)) return res.status(400).json({ error: 'Invalid email.' });
+    const { token, new_password, confirm_password } = req.body || {};
+    if (!token || !new_password || !confirm_password)
+      return res.status(400).json({ error: 'Token and new password are required.' });
     if (new_password !== confirm_password)
       return res.status(400).json({ error: 'Passwords do not match.' });
     if (!validatePassword(new_password))
       return res.status(400).json({ error: 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.' });
 
-    const { rows: userRows } = await pool.query(
-      `SELECT id
-         FROM users
-        WHERE LOWER(email) = LOWER($1)
-          AND is_deleted = FALSE
-        LIMIT 1`,
-      [email]
-    );
-    if (!userRows.length) return res.status(404).json({ error: 'No user with that email.' });
-
-    const userId = userRows[0].id;
-
-    const { rows } = await pool.query(
-      `SELECT otp, expires_at
-         FROM password_resets
-        WHERE user_id = $1
-        ORDER BY expires_at DESC
-        LIMIT 1`,
-      [userId]
-    );
-    if (!rows.length || rows[0].otp !== otp || rows[0].expires_at < new Date()) {
-      return res.status(400).json({ error: 'Invalid or expired OTP.' });
-    }
+    const tok = await getValidTokenRow({ token, type: 'password_reset' });
 
     const hashed = await bcrypt.hash(new_password, 10);
-    await pool.query(`UPDATE users SET password = $1 WHERE id = $2`, [hashed, userId]);
-    await pool.query(`DELETE FROM password_resets WHERE user_id = $1`, [userId]);
+    await pool.query(`UPDATE users SET password = $1 WHERE id = $2`, [hashed, tok.user_id]);
 
-    res.json({ message: 'Password has been reset.' });
-  } catch (err) { next(err); }
+    // Consume this token and invalidate siblings to prevent re-use
+    await consumeToken(tok.id);
+    await invalidateActiveTokensForUser(tok.user_id, 'password_reset');
+
+    res.json({ message: 'Password has been set.' });
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    next(err);
+  }
 };
 
+// REQUEST PASSWORD RESET (token-based)
+exports.requestPasswordReset = async (req, res, next) => {
+  try {
+    const { email } = req.body || {};
+    if (!email || !isEmail(email)) return res.status(400).json({ error: 'Valid email is required.' });
+
+    const { rows } = await pool.query(
+      `SELECT id FROM users WHERE LOWER(email)=LOWER($1) AND is_deleted=FALSE LIMIT 1`,
+      [email]
+    );
+    if (!rows.length) return res.status(200).json({ message: 'If that email exists, a reset link will be sent.' });
+
+    const userId = rows[0].id;
+
+    // Optional: throttle by invalidating previous active reset tokens first
+    await invalidateActiveTokensForUser(userId, 'password_reset');
+
+    const { token: resetToken } = await createUserToken({
+      userId, type: 'password_reset', ttlSeconds: 24 * 3600, metadata: { origin: 'self_service' }
+    });
+
+    const resetUrl = `${FRONTEND_URL}/reset-password?token=${encodeURIComponent(resetToken)}`;
+    await enqueueEmail('reset', { to: email, resetUrl });
+
+    res.json({ message: 'If that email exists, a reset link will be sent.' });
+  } catch (err) { next(err); }
+};
