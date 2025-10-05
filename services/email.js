@@ -9,13 +9,15 @@ const transporter = nodemailer.createTransport({
 });
 
 /** Helper to send */
-async function send({ to, subject, html, text }) {
+async function send({ to, subject, html, text, attachments, headers }) {
   return transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to,
     subject,
     text,
     html,
+    attachments,  // ⬅ pass through
+    headers       // ⬅ optional custom headers
   });
 }
 
@@ -43,12 +45,6 @@ Set your password: ${setupUrl}`;
 
   return send({ to, subject, text, html });
 }
-
-
-
-//
-
-
 
 async function sendOnboardingEmail({ to, companyName }) {
   const subject = `You're in! 🚀 Welcome to ${process.env.APP_NAME || 'the platform'}`;
@@ -83,13 +79,7 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
   return send({ to, subject, html, text: `Reset your password: ${resetUrl}` });
 }
 
-
-
-// ───────────────────────────────────────────────────────────
-// NEW: Complaints – user acknowledgement
-// Data shape from controller: { to? , contact_email?, complaint_id, name? }
-// We’ll pick to || contact_email for safety.
-// ───────────────────────────────────────────────────────────
+// Complaints – user acknowledgement
 async function sendComplaintAckEmail(data) {
   const to = data.to || data.contact_email;
   if (!to) throw new Error('Complaint ack: missing recipient');
@@ -105,15 +95,7 @@ async function sendComplaintAckEmail(data) {
   return send({ to, subject, html });
 }
 
-// ───────────────────────────────────────────────────────────
-// NEW: Complaints – internal notification to support
-// Expect: {
-//   to?, support_to? (fallbacks to SUPPORT_EMAIL_COMPLAINTS),
-//   complaint_id, priority, contact_email, name?, description, image_url?,
-//   is_existing_user, user_id?, company_name?,
-//   is_deleted?, is_suspended?
-// }
-// ───────────────────────────────────────────────────────────
+// Complaints – internal notification to support
 async function sendComplaintNotifyEmail(data) {
   const to =
     data.to ||
@@ -151,10 +133,7 @@ async function sendComplaintNotifyEmail(data) {
   return send({ to, subject, html, attachments });
 }
 
-// ───────────────────────────────────────────────────────────
-// NEW: Contact – user acknowledgement
-// Data: { to? , email?, message, image_url? }
-// ───────────────────────────────────────────────────────────
+// Contact – user acknowledgement
 async function sendContactAckEmail(data) {
   const to = data.to || data.email;
   if (!to) throw new Error('Contact ack: missing recipient');
@@ -171,14 +150,7 @@ async function sendContactAckEmail(data) {
   return send({ to, subject, html });
 }
 
-// ───────────────────────────────────────────────────────────
-// NEW: Contact – internal notification to support
-// Data: {
-//   to? / support_to? (fallbacks to SUPPORT_EMAIL_CONTACT or SUPPORT_EMAIL),
-//   email, message, image_url?,
-//   is_existing_user?, user_id?
-// }
-// ───────────────────────────────────────────────────────────
+// Contact – internal notification to support
 async function sendContactNotifyEmail(data) {
   const to =
     data.to ||
@@ -211,8 +183,23 @@ async function sendContactNotifyEmail(data) {
   return send({ to, subject, html, attachments });
 }
 
+/* ──────────────────────────────────────────────────────────
+   NEW: AI Summary Email
+   Data shape from controller:
+   {
+     to, subject?, companyName, summaryDay, html_content,
+     attachments?: [{ filename, content | path, contentType? }]
+   }
+────────────────────────────────────────────────────────── */
+async function sendAiSummaryEmail({ to, subject, companyName, summaryDay, html_content, attachments }) {
+  if (!to) throw new Error('AI summary: missing recipient');
+  if (!html_content) throw new Error('AI summary: missing html_content');
 
+  const subj = subject || `Your 7-day AI Reputation Summary — ${companyName || ''}${summaryDay ? ` (${summaryDay})` : ''}`.trim();
+  const text = html_content.replace(/<[^>]+>/g, ' '); // basic text fallback
 
+  return send({ to, subject: subj, html: html_content, text, attachments });
+}
 
 module.exports = {
   sendInviteEmail,
@@ -222,4 +209,5 @@ module.exports = {
   sendComplaintNotifyEmail,
   sendContactAckEmail,
   sendContactNotifyEmail,
+  sendAiSummaryEmail,   // ⬅ export new sender
 };

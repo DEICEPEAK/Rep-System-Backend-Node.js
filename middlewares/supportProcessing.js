@@ -2,58 +2,68 @@
 const cron = require('node-cron');
 const pool = require('../db/pool');
 const { enqueueEmail } = require('../services/emailQueue');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { makeGeminiClient } = require('../services/geminiClientImpl');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const SUPPORT_EMAIL_COMPLAINTS = process.env.SUPPORT_EMAIL_COMPLAINTS || 'support-complaints@example.com';
-const SUPPORT_EMAIL_CONTACT = process.env.SUPPORT_EMAIL_CONTACT || 'support-contact@example.com';
+const SUPPORT_EMAIL_CONTACT    = process.env.SUPPORT_EMAIL_CONTACT  || 'support-contact@example.com';
 
-const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
+const geminiClient = makeGeminiClient({ apiKey: GEMINI_API_KEY }); // uses 2.0-flash-001 via client default
 
 function safeUpper(s){ return String(s || '').trim().toUpperCase(); }
 
+// --- Robust JSON parsing helpers (kept from previous logic) ---
+function stripCodeFences(s) {
+  if (!s) return s;
+  return s.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+}
+function extractFirstJson(s) {
+  if (!s) return s;
+  const start = s.indexOf('{');
+  if (start < 0) return s;
+  let depth = 0;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return s;
+}
+function safeJsonParse(raw) {
+  try { return JSON.parse(raw); } catch {}
+  try { return JSON.parse(stripCodeFences(raw)); } catch {}
+  try { return JSON.parse(extractFirstJson(stripCodeFences(raw))); } catch {}
+  return null;
+}
+
+// Use geminiClient.generateText for priority classification
 async function classifyPriority(text) {
-  if (!genAI) return { priority: 'medium', confidence: 0 }; // fallback
+  // Fallback if client is disabled or key missing (client returns ok:false)
+  const systemInstruction = `
+You are a support triage model.
+Classify the complaint text into one of: LOW, MEDIUM, HIGH.
+Consider urgency, impact, and severity (e.g., payment failure, data loss => HIGH).
+Return STRICT JSON ONLY (no prose, no code fences):
 
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
-    systemInstruction: `
-      You are a support triage model.
-      Classify the complaint text into one of: LOW, MEDIUM, HIGH.
-      Consider urgency, impact, and severity (e.g., payment failure, data loss => HIGH).
-      Return STRICT JSON ONLY:
-
-      {"priority":"LOW|MEDIUM|HIGH","confidence":0.0}
-    `
-  });
+{"priority":"LOW|MEDIUM|HIGH","confidence":0.0}
+`.trim();
 
   try {
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text }] }],
-      generationConfig: { temperature: 0.0, maxOutputTokens: 128, responseMimeType: 'application/json' }
+    const res = await geminiClient.generateText(text || '', systemInstruction, {
+      temperature: 0.0,
+      maxOutputTokens: 64,
+      timeoutMs: 12_000
     });
 
-    const raw = typeof result?.response?.text === 'function'
-      ? result.response.text()
-      : result?.response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-    let parsed = null;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // poor-man fallback: extract first JSON block
-      const start = raw.indexOf('{');
-      if (start > -1) {
-        let depth = 0, end = -1;
-        for (let i = start; i < raw.length; i++) {
-          const ch = raw[i];
-          if (ch === '{') depth++;
-          if (ch === '}') { depth--; if (depth === 0) { end = i; break; } }
-        }
-        if (end > -1) parsed = JSON.parse(raw.slice(start, end + 1));
-      }
+    if (!res.ok) {
+      // Could be CONFIG_ERROR or provider issue — graceful fallback
+      return { priority: 'medium', confidence: 0 };
     }
 
+    const parsed = safeJsonParse(res.text);
     const p = safeUpper(parsed?.priority);
     if (p === 'LOW' || p === 'MEDIUM' || p === 'HIGH') {
       return { priority: p.toLowerCase(), confidence: Number(parsed?.confidence) || 0 };
@@ -117,7 +127,7 @@ async function processComplaintsBatch(limit = 100) {
         mappedUser = u || null;
       }
 
-      // Classify priority
+      // Classify priority via Gemini client (2.0-flash-001)
       const { priority, confidence } = await classifyPriority(c.description);
 
       await pool.query(
@@ -205,7 +215,7 @@ function startSupportProcessingCron() {
     processComplaintsBatch().catch(console.error);
     processContactsBatch().catch(console.error);
   });
-  console.log('[supportProcessing] cron started: every 2 minutes');
+  // console.log('[supportProcessing] cron started: every 2 minutes');
 }
 
 module.exports = { startSupportProcessingCron };

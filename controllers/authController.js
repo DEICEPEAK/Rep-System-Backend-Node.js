@@ -11,7 +11,7 @@ const { createUserToken, getValidTokenRow, consumeToken, invalidateActiveTokensF
 const { enqueueEmail } = require('../services/emailQueue');
 require('dotenv').config();
 
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://app.example.com';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://app.7blab.com';
 
 // Helper: validate password strength
 function validatePassword(password) {

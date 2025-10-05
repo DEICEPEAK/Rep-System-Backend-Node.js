@@ -24,6 +24,7 @@ emailEvents.on('completed', ({ jobId }) =>
  *   - complaint_notify
  *   - contact_ack
  *   - contact_notify
+ *   - ai_summary_report      // ⬅ NEW
  */
 async function enqueueEmail(template, payload) {
   return emailQueue.add(template, payload, {
@@ -46,7 +47,7 @@ if (process.env.EMAIL_WORKER_ENABLED !== '0') {
         case 'reset':
           return email.sendPasswordResetEmail(job.data);
 
-        // NEW: Support workflows
+        // Support workflows
         case 'complaint_ack':
           return email.sendComplaintAckEmail(job.data);
         case 'complaint_notify':
@@ -55,6 +56,10 @@ if (process.env.EMAIL_WORKER_ENABLED !== '0') {
           return email.sendContactAckEmail(job.data);
         case 'contact_notify':
           return email.sendContactNotifyEmail(job.data);
+
+        // NEW: AI summary report
+        case 'ai_summary_report':
+          return email.sendAiSummaryEmail(job.data);
 
         default:
           throw new Error(`Unknown email template: ${job.name}`);

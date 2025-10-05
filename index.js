@@ -5,8 +5,15 @@ const express = require('express');
 const cors    = require('cors');
 const config  = require('./config');
 
-const sentimentMiddleware = require('./middlewares/sentimentMiddleware');
-const { recheckSentimentWithGemini } = require('./middlewares/geminiSentimentRecheck');
+const processSentimentForPosts = require('./middlewares/sentimentMiddleware'); 
+const { recheckSentimentWithGemini } = require('./middlewares/geminiSentimentRecheck'); 
+const { startLanguageDetectionWorker } = require('./middlewares/languageDetectionWorker');
+const { startTranslationWorker } = require('./middlewares/translationWorker');
+const keywordScheduler = require('./workers/keywordScheduler');
+const { startAiSummaryCron } = require('./middlewares/aiSummaryWorker');
+require('./workers/keywordWorker'); 
+
+
 const metricsRoute = require('./routes/metricsRoutes');
 const authRoute    = require('./routes/authRoutes');
 const reviewRoutes = require('./routes/reviewRoutes'); 
@@ -22,6 +29,7 @@ const impersonationGate = require('./middlewares/impersonationGate');
 const impersonationAudit = require('./middlewares/impersonationAudit');
 const supportRoutes = require('./routes/supportRoutes');
 const { startSupportProcessingCron } = require('./middlewares/supportProcessing');
+const aiSummaryRoutes = require('./routes/aiSummaryRoutes');
 
 
 
@@ -55,6 +63,10 @@ const adminImpersonationRoutes = require('./admin/Routes/impersonationRoutes');
 startUnsuspendCron();
 startTokenJanitorCron();
 startSupportProcessingCron();
+startLanguageDetectionWorker();
+startTranslationWorker();
+keywordScheduler.start();
+startAiSummaryCron();
 
 
 const app = express();
@@ -81,12 +93,6 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Optional: run once at boot without crashing the process
-if (process.env.SENTIMENT_RUN_ON_BOOT === '1') {
-  sentimentMiddleware().catch(e =>
-    console.error('Initial sentiment run failed:', e.message)
-  );
-}
 
 
 
@@ -103,6 +109,7 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/keyword', keywordRoutes);
 app.use('/api/translation', translationRoutes);
 app.use('/api/support', supportRoutes);
+app.use('/api/summary', aiSummaryRoutes);
 
 // ADMIN
 app.use('/api/admin/dashboard', adminDashboardRoutes);
