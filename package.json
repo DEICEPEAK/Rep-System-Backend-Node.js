@@ -25,6 +25,7 @@
     "@google/generative-ai": "^0.24.1",
     "axios": "^1.10.0",
     "bcrypt": "^6.0.0",
+    "bull": "^4.16.5",
     "bullmq": "^5.59.0",
     "cld3-asm": "^4.0.0",
     "cors": "^2.8.5",
