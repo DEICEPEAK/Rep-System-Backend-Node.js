@@ -45,7 +45,8 @@ exports.viewProfile = async (req, res, next) => {
          linkedin_username,
          place_url,
          tiktok_profile,
-         youtube_channel
+         youtube_channel,
+         keywords
        FROM users
        WHERE id = $1
        LIMIT 1`,
@@ -127,7 +128,8 @@ exports.editBusinessDetails = async (req, res, next) => {
          linkedin_username,
          place_url,
          tiktok_profile,
-         youtube_channel
+         youtube_channel,
+         keywords
     `;
 
     const { rows } = await pool.query(sql, vals);

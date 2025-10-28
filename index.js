@@ -11,6 +11,7 @@ const { startLanguageDetectionWorker } = require('./middlewares/languageDetectio
 const { startTranslationWorker } = require('./middlewares/translationWorker');
 const keywordScheduler = require('./workers/keywordScheduler');
 const { startAiSummaryCron } = require('./middlewares/aiSummaryWorker');
+const { startRelevanceCron } = require('./middlewares/relevanceWorker');
 require('./workers/keywordWorker'); 
 
 
@@ -30,12 +31,6 @@ const impersonationAudit = require('./middlewares/impersonationAudit');
 const supportRoutes = require('./routes/supportRoutes');
 const { startSupportProcessingCron } = require('./middlewares/supportProcessing');
 const aiSummaryRoutes = require('./routes/aiSummaryRoutes');
-
-
-
-
-
-
 
 
 
@@ -67,6 +62,7 @@ startLanguageDetectionWorker();
 startTranslationWorker();
 keywordScheduler.start();
 startAiSummaryCron();
+startRelevanceCron();
 
 
 const app = express();
@@ -92,9 +88,6 @@ app.use(cors({
 // 2) Body parsers
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-
-
 
 
 

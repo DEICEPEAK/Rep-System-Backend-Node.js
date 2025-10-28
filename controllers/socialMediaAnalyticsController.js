@@ -89,6 +89,7 @@ async function loadMetrics(req) {
         FROM linkedin_posts
        WHERE company_name = $1
          AND posted_at_iso::date BETWEEN $2 AND $3
+         AND relevant = TRUE
     ),
     previous_period AS (
       SELECT rating
@@ -110,6 +111,7 @@ async function loadMetrics(req) {
         FROM linkedin_posts
        WHERE company_name = $1
          AND posted_at_iso::date BETWEEN $4 AND $5
+          AND relevant = TRUE
     )
     SELECT
       (SELECT COUNT(*) FROM current_period) AS current_total,
@@ -309,6 +311,7 @@ exports.mentions = async (req, res, next) => {
         'Twitter'     AS source
       FROM twitter_mentions
       WHERE company_name = $1
+      
         ${twitterDateClause}
 
       UNION ALL
@@ -351,6 +354,7 @@ exports.mentions = async (req, res, next) => {
         'LinkedIn'    AS source
       FROM linkedin_posts
       WHERE company_name = $1
+      AND relevant = TRUE
         ${linkedinDateClause}
 
       ORDER BY created_at DESC
@@ -400,6 +404,7 @@ posts_recent AS (
     SELECT 1 FROM linkedin_posts
     WHERE company_name = (SELECT company_name FROM company) 
       AND posted_at_iso::date >= CURRENT_DATE - 30
+      AND relevant = TRUE
   ) t
 ),
 followers_now AS (
@@ -483,6 +488,7 @@ engagement_recent AS (
     FROM linkedin_posts
     WHERE company_name = (SELECT company_name FROM company)
       AND posted_at_iso::date >= CURRENT_DATE - 30
+      AND relevant = TRUE
   ) e
 )
 SELECT

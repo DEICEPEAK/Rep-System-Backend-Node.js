@@ -86,12 +86,12 @@ exports.videoContents = async (req, res, next) => {
         im.author_handle                  AS author,
         im.rating                         AS rating,
         im.created_at                     AS post_date,
-        im.videourl                       AS video_url,
+        im.post_url                       AS video_url,
         'instagram'                       AS source
       FROM instagram_mentions im
       WHERE im.company_name = $1
-        AND im.created_at::date BETWEEN $2 AND $3
-        AND im.videourl IS NOT NULL
+      AND im.created_at::date BETWEEN $2 AND $3
+      AND im.post_url IS NOT NULL
 
       UNION ALL
 

@@ -12,7 +12,7 @@ class BaseKeywordProcessor {
 
   async getUserData(userId) {
     const { rows } = await pool.query(
-      `SELECT id, company_name, company_description 
+      `SELECT id, company_name, description 
        FROM users WHERE id = $1`,
       [userId]
     );
@@ -111,7 +111,7 @@ Example: ["slow_withdrawal_process", "helpful_customer_support", "mobile_app_bug
 COMPANY ANALYSIS REQUEST
 
 Company Name: ${companyData.company_name}
-Business Description: ${companyData.company_description}
+Business Description: ${companyData.description}
 
 CUSTOMER CONTENT (Last 30 Days):
 ${limitedTexts}

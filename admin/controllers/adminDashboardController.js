@@ -30,7 +30,8 @@ exports.addNewCompany = async (req, res, next) => {
       email,
       country,
       telephone,
-      company_web_address
+      company_web_address,
+      description
     } = req.body || {};
 
     if (!first_name || !last_name || !company_name || !email || !country || !telephone) {
@@ -50,12 +51,12 @@ exports.addNewCompany = async (req, res, next) => {
 
     const insertSql = `
       INSERT INTO users (
-        first_name, last_name, password, company_name, email, country, telephone, company_web_address, email_verified
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8, FALSE)
+        first_name, last_name, password, company_name, email, country, telephone, company_web_address, description, email_verified
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8, $9, FALSE)
       RETURNING id, email, company_name, created_at
     `;
     const { rows } = await pool.query(insertSql, [
-      first_name, last_name, hashed, company_name, email, country, telephone, company_web_address || null
+      first_name, last_name, hashed, company_name, email, country, telephone, company_web_address, description || null
     ]);
     const user = rows[0];
 
@@ -370,7 +371,8 @@ exports.editUserBusinessDetails = async (req, res, next) => {
          linkedin_username,
          place_url,
          tiktok_profile,
-         youtube_channel
+         youtube_channel,
+         keywords
     `;
 
     const { rows } = await pool.query(sql, vals);

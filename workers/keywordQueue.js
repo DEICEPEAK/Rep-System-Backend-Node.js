@@ -1,21 +1,23 @@
 // workers/keywordQueue.js
-const Queue = require('bull');
 
-// Create Redis connection
-const redisConfig = {
-  redis: {
-    host: process.env.REDIS_HOST || '127.0.0.1',
-    port: process.env.REDIS_PORT || 6379,
-    password: process.env.REDIS_PASSWORD || undefined,
-  }
+require('dotenv').config();
+const Queue = require('bull');
+const IORedis = require('ioredis');
+
+const redisUrl = process.env.REDIS_URL;
+const common = {
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
 };
 
-// Three separate queues for better control
-const generalQueue = new Queue('general keywords', redisConfig);
-const socialQueue = new Queue('social keywords', redisConfig);
-const reviewQueue = new Queue('review keywords', redisConfig);
+const opts = {
+  createClient: (type) => new IORedis(redisUrl, common)
+};
 
-// Export all queues
+const generalQueue = new Queue('general keywords', opts);
+const socialQueue  = new Queue('social keywords',  opts);
+const reviewQueue  = new Queue('review keywords',  opts);
+
 module.exports = {
   generalQueue,
   socialQueue,

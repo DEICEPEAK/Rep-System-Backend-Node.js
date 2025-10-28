@@ -65,16 +65,16 @@ async function recheckSentimentWithGemini() {
 
   for (const { table, pk } of SOURCES) {
     // Require: gemini_checked=0, rating in {0,1,2,5}, eng_translated NOT NULL,
-    // and users.company_description NOT NULL. company_name is assumed present.
+    // and users.description NOT NULL. company_name is assumed present.
     const { rows } = await pool.query(
       `
-      SELECT t."${pk}" AS pk, t.eng_translated, t.company_name, u.company_description
+      SELECT t."${pk}" AS pk, t.eng_translated, t.company_name, u.description
         FROM ${table} t
         JOIN users u ON LOWER(u.company_name) = LOWER(t.company_name)
        WHERE t.gemini_checked = 0
          AND t.rating IN (0,1,2,5)
          AND t.eng_translated IS NOT NULL
-         AND u.company_description IS NOT NULL
+         AND u.description IS NOT NULL
        LIMIT $1
       `,
       [ROW_LIMIT]
@@ -82,7 +82,7 @@ async function recheckSentimentWithGemini() {
 
     for (const row of rows) {
       try {
-        const sys = makeSystemInstruction(row.company_name, row.company_description);
+        const sys = makeSystemInstruction(row.company_name, row.description);
         const res = await client.generateText(row.eng_translated, sys, {
           temperature: 0.0,
           maxOutputTokens: 8,
