@@ -63,6 +63,8 @@ async function recheckSentimentWithGemini() {
     return;
   }
 
+  //console.log('[Gemini] recheckSentimentWithGemini starting');
+
   for (const { table, pk } of SOURCES) {
     // Require: gemini_checked=0, rating in {0,1,2,5}, eng_translated NOT NULL,
     // and users.description NOT NULL. company_name is assumed present.
@@ -79,6 +81,11 @@ async function recheckSentimentWithGemini() {
       `,
       [ROW_LIMIT]
     );
+
+    if (!rows.length) {
+      if (DEBUG_GEMINI) console.log(`[Gemini] No rows to recheck for table ${table}`);
+      continue;
+    }
 
     for (const row of rows) {
       try {
@@ -102,12 +109,18 @@ async function recheckSentimentWithGemini() {
             WHERE "${pk}" = $2`,
           [stars, row.pk]
         );
+
+        // success log
+       // console.log(`[Gemini][${table} ${row.pk}] Success: set rating=${stars} (label=${label})`);
       } catch (err) {
         // leave gemini_checked = 0 for retry on next run
-        if (DEBUG_GEMINI) console.error(`[Gemini ${table} ${row.pk}]`, err.message);
+        console.error(`[Gemini][${table} ${row.pk}] Failed:`, err.message || err);
+        if (DEBUG_GEMINI) console.error(err);
       }
     }
   }
+
+ // console.log('[Gemini] recheckSentimentWithGemini completed');
 }
 
 /* Schedule */

@@ -31,6 +31,7 @@ const impersonationAudit = require('./middlewares/impersonationAudit');
 const supportRoutes = require('./routes/supportRoutes');
 const { startSupportProcessingCron } = require('./middlewares/supportProcessing');
 const aiSummaryRoutes = require('./routes/aiSummaryRoutes');
+const webContentRoutes = require('./routes/webContentRoutes');
 
 
 
@@ -103,6 +104,7 @@ app.use('/api/keyword', keywordRoutes);
 app.use('/api/translation', translationRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/summary', aiSummaryRoutes);
+app.use('/api/web-content', webContentRoutes);
 
 // ADMIN
 app.use('/api/admin/dashboard', adminDashboardRoutes);

@@ -493,8 +493,8 @@ engagement_recent AS (
 )
 SELECT
   (SELECT cnt FROM posts_recent) AS recent_posts,
-  (SELECT followers_now FROM followers_now) -
-  (SELECT followers_prev FROM followers_30d_ago) AS recent_followers,
+  (SELECT followers_now FROM followers_now) AS followers_now,
+  (SELECT followers_prev FROM followers_30d_ago) AS followers_prev,
   CASE
     WHEN (SELECT followers_now FROM followers_now) = 0 THEN 0
     ELSE ROUND(
@@ -504,8 +504,7 @@ SELECT
     )
   END AS recent_engagement_rate;
 `;
-
-
+    
 /**
  * Big stats endpoint for today's posts, new followers, and engagement rate.
  */
@@ -513,7 +512,20 @@ exports.stats = async (req, res, next) => {
   try {
     const userId = req.user.id;
     const { rows } = await pool.query(bigStatsSql, [userId]);
-    res.json(rows[0]);
+    const row = rows[0] || { recent_posts: 0, followers_now: 0, followers_prev: 0, recent_engagement_rate: 0 };
+
+    // If we don't have previous 30-day followers data, return a friendly message
+    let previous_followers = row.followers_prev;
+    if (Number(previous_followers) === 0) {
+      previous_followers = 'Previous 30 days followers not available yet';
+    }
+
+    res.json({
+      recent_posts: row.recent_posts || 0,
+      followers_now: Number(row.followers_now || 0),
+      previous_followers,
+      recent_engagement_rate: Number(row.recent_engagement_rate || 0)
+    });
   } catch (err) {
     next(err);
   }

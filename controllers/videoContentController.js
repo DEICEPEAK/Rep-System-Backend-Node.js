@@ -60,9 +60,9 @@ exports.videoContents = async (req, res, next) => {
     const { start, end } = getDateRange(req.query);
 
     // NOTE:
-    // - twitter & instagram: only rows where videourl IS NOT NULL
-    // - tiktok: all rows (schema note says "All")
-    // - youtube: build full URL from video_id
+    // - twitter: only rows where videourl IS NOT NULL        // CHANGE: updated note (Instagram removed)
+    // - tiktok: ONLY relevant rows                           // CHANGE
+    // - youtube: ONLY relevant rows; build full URL          // CHANGE
     // - unify column names for a single UNION ALL result
     const sql = `
       /* ───────── Twitter (only with videourl) ───────── */
@@ -78,24 +78,11 @@ exports.videoContents = async (req, res, next) => {
         AND tm.created_at::date BETWEEN $2 AND $3
         AND tm.videourl IS NOT NULL
 
-      UNION ALL
-
-      /* ───────── Instagram (only with videourl) ───────── */
-      SELECT
-        im.caption                        AS caption,
-        im.author_handle                  AS author,
-        im.rating                         AS rating,
-        im.created_at                     AS post_date,
-        im.post_url                       AS video_url,
-        'instagram'                       AS source
-      FROM instagram_mentions im
-      WHERE im.company_name = $1
-      AND im.created_at::date BETWEEN $2 AND $3
-      AND im.post_url IS NOT NULL
+      /* CHANGE: Removed Instagram block entirely */
 
       UNION ALL
 
-      /* ───────── TikTok (all) ───────── */
+      /* ───────── TikTok (ONLY relevant) ───────── */       /* CHANGE */
       SELECT
         tt.caption                        AS caption,
         tt.author_handle                  AS author,
@@ -106,10 +93,11 @@ exports.videoContents = async (req, res, next) => {
       FROM tiktok_posts tt
       WHERE tt.company_name = $1
         AND tt.created_at::date BETWEEN $2 AND $3
+        AND tt.relevant IS TRUE                                    /* CHANGE */
 
       UNION ALL
 
-      /* ───────── YouTube (all; construct full URL) ───────── */
+      /* ───────── YouTube (ONLY relevant; construct URL) ───────── */  /* CHANGE */
       SELECT
         yd.title                          AS caption,
         yd.channel_name                   AS author,
@@ -120,6 +108,7 @@ exports.videoContents = async (req, res, next) => {
       FROM youtube_data yd
       WHERE yd.company_name = $1
         AND yd.published_at::date BETWEEN $2 AND $3
+        AND yd.relevant IS TRUE                                     /* CHANGE */
 
       ORDER BY post_date DESC
     `;
@@ -133,9 +122,9 @@ exports.videoContents = async (req, res, next) => {
       author: r.author,
       rating: r.rating,
       sentiment: classifySentiment(r.rating),
-      post_date: r.post_date,                 // keep original timestamp/date
-      video_urls: r.video_url ? [r.video_url] : [],   // plural, so wrap in array
-      source: r.source                        // 'twitter' | 'instagram' | 'tiktok' | 'youtube'
+      post_date: r.post_date,
+      video_urls: r.video_url ? [r.video_url] : [],
+      source: r.source                        // 'twitter' | 'tiktok' | 'youtube'   // CHANGE: instagram removed from set
     }));
 
     return res.json(results);
@@ -167,6 +156,7 @@ tiktok AS (
   FROM tiktok_posts
   WHERE company_name = (SELECT company_name FROM company)
     AND created_at::date BETWEEN CURRENT_DATE - INTERVAL '30 days' AND CURRENT_DATE
+    AND relevant IS TRUE                                   -- CHANGE: stats use ONLY relevant TikTok rows
 ),
 youtube AS (
   SELECT
@@ -178,6 +168,7 @@ youtube AS (
   FROM youtube_data
   WHERE company_name = (SELECT company_name FROM company)
     AND published_at::date BETWEEN CURRENT_DATE - INTERVAL '30 days' AND CURRENT_DATE
+    AND relevant IS TRUE                                   -- CHANGE: stats use ONLY relevant YouTube rows
 )
 SELECT
   (t.plays + y.views) AS total_views_30d,
@@ -206,7 +197,7 @@ FROM tiktok t, youtube y;
  *   average_rating_30d: number
  * }
  */
-exports.videoStats= async (req, res, next) => {
+exports.videoStats = async (req, res, next) => {
   try {
     const userId = req.user.id;
     const { rows } = await pool.query(videoStats30dSql, [userId]);
